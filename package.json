@@ -1,5 +1,5 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "scheme-compass",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -90,7 +90,6 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
     "jsdom": "^20.0.3",
-    "nitro": "3.0.260603-beta",
     "postgres": "^3.4.9",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
