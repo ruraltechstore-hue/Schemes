@@ -90,6 +90,38 @@ function Register() {
     };
   }, [step]);
 
+  // Listen for Supabase Auth changes (e.g. if user clicked confirmation link in their email)
+  useEffect(() => {
+    if (step !== "otp") return;
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if ((event === "SIGNED_IN" || event === "USER_UPDATED") && session?.user) {
+        try {
+          await supabase.from("profiles").upsert({
+            id: session.user.id,
+            full_name: f.name.trim(),
+            email: f.email.trim().toLowerCase(),
+            mobile: f.mobile.trim(),
+            state: f.state,
+            district: f.district.trim(),
+            updated_at: new Date().toISOString(),
+          });
+        } catch {
+          // Non-fatal
+        }
+        toast.success("Account verified successfully! Welcome to Scheme Finder.");
+        setStep("success");
+        setTimeout(() => {
+          navigate("/dashboard", { replace: true });
+        }, 1000);
+      }
+    });
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+    };
+  }, [step, f, navigate]);
+
   // Format seconds to mm:ss
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -291,50 +323,70 @@ function Register() {
         }).catch(() => null);
       }
 
-      // 2. Log in using supabase.auth.signInWithPassword with the registered email and password
       let authUser: any = null;
       let signInErrorMsg: string | null = null;
 
-      const firstAttempt = await supabase.auth.signInWithPassword({
-        email,
-        password: f.password,
-      });
+      // 2. Direct Supabase Auth OTP verification (for native 6-digit signup tokens)
+      try {
+        const { data: otpVerifyData, error: otpVerifyError } = await supabase.auth.verifyOtp({
+          email,
+          token: otp.trim(),
+          type: "signup",
+        });
 
-      if (firstAttempt.data?.user) {
-        authUser = firstAttempt.data.user;
-      } else {
-        signInErrorMsg = firstAttempt.error?.message || null;
-        // Only retry briefly if email confirmation replication is pending
-        if (signInErrorMsg?.toLowerCase().includes("email not confirmed")) {
-          await new Promise((r) => setTimeout(r, 500));
-          const retryAttempt = await supabase.auth.signInWithPassword({
-            email,
-            password: f.password,
-          });
-          if (retryAttempt.data?.user) {
-            authUser = retryAttempt.data.user;
-            signInErrorMsg = null;
-          } else if (retryAttempt.error) {
-            signInErrorMsg = retryAttempt.error.message;
+        if (otpVerifyData?.user) {
+          authUser = otpVerifyData.user;
+        } else if (otpVerifyError) {
+          signInErrorMsg = otpVerifyError.message;
+        }
+      } catch (err: any) {
+        signInErrorMsg = err?.message || null;
+      }
+
+      // 3. If verifyOtp didn't yield an authUser, try password sign-in
+      if (!authUser) {
+        const firstAttempt = await supabase.auth.signInWithPassword({
+          email,
+          password: f.password,
+        });
+
+        if (firstAttempt.data?.user) {
+          authUser = firstAttempt.data.user;
+          signInErrorMsg = null;
+        } else {
+          signInErrorMsg = firstAttempt.error?.message || signInErrorMsg || null;
+          // Only retry briefly if email confirmation replication is pending
+          if (signInErrorMsg?.toLowerCase().includes("email not confirmed")) {
+            await new Promise((r) => setTimeout(r, 500));
+            const retryAttempt = await supabase.auth.signInWithPassword({
+              email,
+              password: f.password,
+            });
+            if (retryAttempt.data?.user) {
+              authUser = retryAttempt.data.user;
+              signInErrorMsg = null;
+            } else if (retryAttempt.error) {
+              signInErrorMsg = retryAttempt.error.message;
+            }
           }
         }
       }
 
       if (!authUser) {
-        // Fallback: check session from setSession
+        // Fallback: check session from setSession or verifyOtp
         const { data: userData } = (await supabase.auth.getUser?.().catch(() => ({ data: { user: null } }))) || { data: { user: null } };
         if (userData?.user) {
           authUser = userData.user;
         }
       }
 
-      // 3. Strict authentication verification: do NOT report success if user session could not be established
+      // 4. Strict authentication verification: do NOT report success if user session could not be established
       if (!authUser) {
         const errorMsg = signInErrorMsg?.toLowerCase().includes("email not confirmed")
-          ? "Account was created in Supabase Auth, but email confirmation is pending. In Supabase Dashboard → Authentication → Providers → Email, please turn OFF 'Confirm email'."
+          ? "Account was created in Supabase Auth, but email confirmation is pending. Please verify using the 6-digit code or link sent to your email."
           : (signInErrorMsg
               ? `Could not establish an active user session: ${signInErrorMsg}`
-              : "Could not establish an active user session in Supabase Auth. Please verify your credentials and try logging in.");
+              : "Invalid verification code. Please check the 6-digit code sent to your email, or click the link in your confirmation email.");
         setErrorMessage(errorMsg);
         toast.error(errorMsg);
         setVerifying(false);
@@ -452,6 +504,9 @@ function Register() {
                   <InputOTPSlot index={5} className="h-12 w-11 rounded-md border text-lg font-bold" />
                 </InputOTPGroup>
               </InputOTP>
+              <p className="text-center text-xs text-muted-foreground max-w-xs">
+                Enter the 6-digit code sent to your email. If your email contains a confirmation link, you can also click it to verify.
+              </p>
             </div>
 
             {/* Timers display */}

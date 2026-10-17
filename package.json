@@ -72,12 +72,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@eslint/js": "^9.32.0",
-<<<<<<< HEAD
-=======
-    "@lovable.dev/vite-tanstack-config": "2.25.3",
->>>>>>> 508c7809980ea7dfaace8d8333c7e69dbb7ce16d
-    "@testing-library/jest-dom": "^6.6.0",
+  "@eslint/js": "^9.32.0",
+  "@lovable.dev/vite-tanstack-config": "2.25.3",
+  "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^22.16.5",
     "@types/papaparse": "^5.5.2",
