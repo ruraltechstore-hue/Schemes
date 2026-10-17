@@ -328,14 +328,33 @@ function Register() {
 
       // 2. Direct Supabase Auth OTP verification (for native 6-digit signup tokens)
       try {
-        const { data: otpVerifyData, error: otpVerifyError } = await supabase.auth.verifyOtp({
+        let { data: otpVerifyData, error: otpVerifyError } = await supabase.auth.verifyOtp({
           email,
           token: otp.trim(),
           type: "signup",
         });
 
+        // Fallback to type 'email' if 'signup' is not accepted by GoTrue
+        if (!otpVerifyData?.user && otpVerifyError) {
+          const fallbackVerify = await supabase.auth.verifyOtp({
+            email,
+            token: otp.trim(),
+            type: "email",
+          });
+          if (fallbackVerify.data?.user) {
+            otpVerifyData = fallbackVerify.data;
+            otpVerifyError = null;
+          }
+        }
+
         if (otpVerifyData?.user) {
           authUser = otpVerifyData.user;
+          if (otpVerifyData.session) {
+            await supabase.auth.setSession({
+              access_token: otpVerifyData.session.access_token,
+              refresh_token: otpVerifyData.session.refresh_token,
+            }).catch(() => null);
+          }
         } else if (otpVerifyError) {
           signInErrorMsg = otpVerifyError.message;
         }
