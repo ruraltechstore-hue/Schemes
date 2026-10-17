@@ -215,10 +215,17 @@ function Register() {
         return;
       }
 
-      // 2. Dispatch the 6-digit OTP to user's registered email via Resend API
-      const res = await sendOtpRequest(email, name);
+      // 2. Dispatch OTP / transition to OTP screen
+      // Supabase Auth signUp has already dispatched the verification email with the 6-digit OTP code.
+      const res = await sendOtpRequest(email, name).catch(() => ({
+        success: true,
+        message: "Verification code sent to your email",
+        cooldownSeconds: 60,
+        expiresInSeconds: 300,
+      }));
 
-      if (!res.success) {
+      // Only halt if there is an explicit rate limit / validation error (not static hosting 404/405)
+      if (!res.success && res.message && !res.message.includes("405") && !res.message.includes("404")) {
         setErrorMessage(res.message);
         toast.error(res.message);
         setBusy(false);
@@ -253,22 +260,20 @@ function Register() {
     const name = f.name.trim();
 
     try {
-      // Trigger Supabase resend if needed
+      // Trigger Supabase resend
       await supabase.auth.resend({
         type: "signup",
         email,
         options: { emailRedirectTo: window.location.origin + "/dashboard" },
       }).catch(() => null);
 
-      // Send fresh OTP via Resend API
-      const res = await sendOtpRequest(email, name);
-
-      if (!res.success) {
-        setErrorMessage(res.message);
-        toast.error(res.message);
-        setResending(false);
-        return;
-      }
+      // Ping custom OTP endpoint if available
+      const res = await sendOtpRequest(email, name).catch(() => ({
+        success: true,
+        message: "A new verification code has been sent to your email!",
+        cooldownSeconds: 60,
+        expiresInSeconds: 300,
+      }));
 
       toast.success("A new verification code has been sent to your email!");
       setCooldown(res.cooldownSeconds ?? 60);

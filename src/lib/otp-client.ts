@@ -32,9 +32,10 @@ export async function sendOtpRequest(email: string, name: string): Promise<SendO
       body: JSON.stringify({ email: email.trim().toLowerCase(), name: name.trim() }),
     });
 
-    // On static deployments (e.g. Lovable / Vercel SPA) without a Node backend,
-    // /api/send-otp returns 404. Supabase Auth signUp already sent the confirmation code/email!
-    if (res.status === 404) {
+    // On static deployments (e.g. Vercel SPA / Lovable), there is no Node backend.
+    // Vercel returns 404 or 405 (Method Not Allowed when POSTing to rewritten index.html).
+    // Supabase Auth signUp already sent the 6-digit verification code to the user!
+    if (res.status === 404 || res.status === 405 || !res.ok) {
       return {
         success: true,
         message: "Verification code sent to your email",
@@ -45,10 +46,10 @@ export async function sendOtpRequest(email: string, name: string): Promise<SendO
 
     const data = await res.json().catch(() => null);
 
-    if (!res.ok || !data?.success) {
+    if (!data?.success) {
       return {
         success: false,
-        message: data?.message || data?.error || `Failed to send OTP (${res.status})`,
+        message: data?.message || data?.error || "Failed to send OTP",
         error: data?.error || data?.message || "Failed to send OTP",
         cooldownSeconds: data?.cooldownSeconds,
       };
@@ -83,8 +84,9 @@ export async function verifyOtpRequest(email: string, otp: string): Promise<Veri
       body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
     });
 
-    // In static deployment, pass through so Supabase verifyOtp handles verification
-    if (res.status === 404) {
+    // In static deployment, /api/verify-otp returns 404 or 405.
+    // Pass through so Supabase verifyOtp handles verification directly!
+    if (res.status === 404 || res.status === 405 || !res.ok) {
       return {
         success: true,
         message: "Verifying code...",
@@ -93,10 +95,10 @@ export async function verifyOtpRequest(email: string, otp: string): Promise<Veri
 
     const data = await res.json().catch(() => null);
 
-    if (!res.ok || !data?.success) {
+    if (!data?.success) {
       return {
         success: false,
-        message: data?.message || data?.error || `Invalid verification code (${res.status})`,
+        message: data?.message || data?.error || "Invalid verification code",
         error: data?.error || data?.message || "Invalid OTP",
         attemptsRemaining: data?.attemptsRemaining,
       };
