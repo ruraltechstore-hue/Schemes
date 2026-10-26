@@ -133,4 +133,31 @@ describe("BulkUpload Component Integration Tests", () => {
       expect(screen.getByText(/Review Column Header Mapping/i)).toBeInTheDocument();
     });
   });
+
+  it("allows proceeding to preview and validates scheme when Official Website URL and video are absent", async () => {
+    renderBulkUpload();
+    fireEvent.click(screen.getByRole("button", { name: /bulk upload schemes/i }));
+
+    // CSV containing only Scheme Name and Description, without website URL or video
+    const csvContent = `Scheme Name,Description\n"Scheme Without Any Link","Description only"`;
+    const file = new File([csvContent], "no_urls.csv", { type: "text/csv" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /preview data/i })).toBeInTheDocument();
+    });
+
+    const previewBtn = screen.getByRole("button", { name: /preview data/i });
+    expect(previewBtn).not.toBeDisabled();
+    fireEvent.click(previewBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Valid")).toBeInTheDocument();
+    });
+
+    expect(screen.getByDisplayValue("Scheme Without Any Link")).toBeInTheDocument();
+    expect(screen.getByTitle("No tutorial video provided")).toBeInTheDocument();
+  });
 });

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Disclaimer } from "@/components/Disclaimer";
 import { SchemeVideoPlayer } from "@/components/SchemeVideoPlayer";
 import { SchemeRequiredDocuments } from "@/components/SchemeRequiredDocuments";
+import { PointWiseList } from "@/components/PointWiseList";
 import { useApplications, useMatches } from "@/hooks/use-app-data";
 import { getSchemeVideo } from "@/lib/video-helpers";
 import { APP_STATUSES } from "@/lib/constants";
@@ -57,8 +58,22 @@ function Detail() {
         </div>
         <h1 className="mt-3 text-2xl font-bold text-primary md:text-3xl">{s.name}</h1>
         <p className="text-sm text-muted-foreground">{s.ministry}</p>
-        <p className="mt-4">{s.description}</p>
-        <div className="mt-4 rounded-md bg-accent p-4"><b>Benefits:</b> {s.benefits}</div>
+        {s.description && (
+          <div className="mt-4">
+            <PointWiseList text={s.description} />
+          </div>
+        )}
+        {s.benefits && (
+          <div className="mt-4 rounded-md bg-accent p-4">
+            <b>Benefits:</b>
+            <PointWiseList
+              text={s.benefits}
+              icon="check"
+              inlineIfSingle
+              className="mt-1"
+            />
+          </div>
+        )}
         {((s.eligibility as any)?.application_process || (s.eligibility as any)?.application_deadline) && (
           <div className="mt-4 text-sm">
             {(s.eligibility as any)?.application_process && (
@@ -70,11 +85,13 @@ function Detail() {
           </div>
         )}
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button asChild>
-            <a href={s.apply_url} target="_blank" rel="noreferrer">
-              Apply Now <ExternalLink className="h-4 w-4" />
-            </a>
-          </Button>
+          {s.apply_url && s.apply_url.trim() ? (
+            <Button asChild>
+              <a href={s.apply_url} target="_blank" rel="noreferrer">
+                Apply Now <ExternalLink className="h-4 w-4" />
+              </a>
+            </Button>
+          ) : null}
           <Select value={app?.status ?? ""} onValueChange={track}>
             <SelectTrigger className="w-52"><SelectValue placeholder="Track this scheme" /></SelectTrigger>
             <SelectContent>{APP_STATUSES.map((st) => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent>

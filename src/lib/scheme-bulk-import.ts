@@ -3,6 +3,7 @@ import { isYouTubeUrl } from "./video-helpers";
 import { CASTE_CATEGORIES, DOC_TYPES, GENDERS, OCCUPATIONS, SCHEME_CATEGORIES, STATES } from "./constants";
 import { splitRequiredDocuments } from "./document-helpers";
 export { splitRequiredDocuments } from "./document-helpers";
+export { splitIntoPoints, isPointWise } from "./point-helpers";
 import type { Scheme, Eligibility } from "./matching";
 
 export type TargetFieldKey =
@@ -211,9 +212,9 @@ export const TARGET_FIELDS: TargetFieldDef[] = [
   {
     key: "apply_url",
     label: "Official Website URL",
-    required: true,
+    required: false,
     group: "process",
-    description: "Official portal or application website link (Required)",
+    description: "Official portal or application website link (Optional)",
     aliases: [
       "official website url",
       "official website",
@@ -764,13 +765,13 @@ export function getRowValue(rawRow: Record<string, any>, colHeader: string): any
   if (!rawRow || !colHeader) return undefined;
 
   // 1. Exact match
-  if (rawRow[colHeader] !== undefined && rawRow[colHeader] !== null && rawRow[colHeader] !== "") {
+  if (rawRow[colHeader] !== undefined && rawRow[colHeader] !== null && String(rawRow[colHeader]).trim() !== "") {
     return rawRow[colHeader];
   }
 
   // 2. Clean/trimmed match
   const cleanHeader = colHeader.replace(/^\uFEFF/, "").trim();
-  if (rawRow[cleanHeader] !== undefined && rawRow[cleanHeader] !== null && rawRow[cleanHeader] !== "") {
+  if (rawRow[cleanHeader] !== undefined && rawRow[cleanHeader] !== null && String(rawRow[cleanHeader]).trim() !== "") {
     return rawRow[cleanHeader];
   }
 
@@ -778,7 +779,7 @@ export function getRowValue(rawRow: Record<string, any>, colHeader: string): any
   const normTarget = cleanHeader.toLowerCase().replace(/[\s_\-]+/g, "");
   for (const [key, value] of Object.entries(rawRow)) {
     const normKey = key.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s_\-]+/g, "");
-    if (normKey === normTarget && value !== undefined && value !== null && value !== "") {
+    if (normKey === normTarget && value !== undefined && value !== null && String(value).trim() !== "") {
       return value;
     }
   }
@@ -799,26 +800,35 @@ export function transformRowToPayload(
   for (const [colHeader, targetKey] of Object.entries(mapping)) {
     if (targetKey && targetKey !== "__ignore__") {
       const val = getRowValue(rawRow, colHeader);
-      if (val !== undefined && val !== null && val !== "") {
-        values[targetKey] = val;
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        values[targetKey] = typeof val === "string" ? val.trim() : val;
       }
     }
   }
 
   // Parse fields
+  const normalizeMultiline = (val: unknown): string => {
+    if (val === null || val === undefined) return "";
+    return String(val)
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .trim();
+  };
+
   const name = String(values.name || "").trim();
-  const description = String(values.description || "").trim();
+  const description = normalizeMultiline(values.description);
   const ministry = String(values.ministry || "").trim();
   const category = parseCategory(values.category);
   const { level, state } = parseLevelAndState(values.level, values.state);
-  const benefits = String(values.benefits || "").trim();
-  const eligibility_text = String(values.eligibility_text || "").trim();
+  const benefits = normalizeMultiline(values.benefits);
+  const eligibility_text = normalizeMultiline(values.eligibility_text);
   const required_documents = parseRequiredDocuments(values.required_documents);
 
-  const { url: apply_url } = parseUrl(values.apply_url);
+  const rawApplyUrl = values.apply_url ? String(values.apply_url).trim() : "";
+  const { url: apply_url } = rawApplyUrl ? parseUrl(rawApplyUrl) : { url: "" };
 
   // Video
-  const videoRaw = String(values.application_video_url || "").trim();
+  const videoRaw = values.application_video_url ? String(values.application_video_url).trim() : "";
   const application_video_url = videoRaw || null;
   const video_type = application_video_url
     ? isYouTubeUrl(application_video_url)
@@ -903,16 +913,14 @@ export function validateRowPayload(
     errors.push("Scheme Name is required");
   }
 
-  if (!payload.apply_url) {
-    errors.push("Official Website URL is required");
-  } else {
+  if (payload.apply_url && payload.apply_url.trim()) {
     const { valid } = parseUrl(payload.apply_url);
     if (!valid) {
       errors.push("Invalid Official Website URL (e.g. https://example.gov.in)");
     }
   }
 
-  if (payload.application_video_url) {
+  if (payload.application_video_url && payload.application_video_url.trim()) {
     const { valid } = parseUrl(payload.application_video_url);
     if (!valid) {
       warnings.push("Application Video URL appears malformed");
@@ -964,14 +972,14 @@ export function generateSampleData(): { headers: string[]; rows: (string | numbe
   const rows: (string | number)[][] = [
     [
       "PM Kisan Samman Nidhi Yojana",
-      "Direct income support of ₹6,000 per year in three equal installments to all landholding farmer families across the country.",
+      "• Direct income support to landholding farmer families across India.\n• 100% centrally funded scheme by Government of India.\n• Supplemental financial aid for agriculture and domestic needs.",
       "Ministry of Agriculture & Farmers Welfare",
       "Central",
       "",
       "Agriculture",
       "Landholding farmer families with cultivable land; Valid bank account linked with Aadhaar; Age 18+",
       "Aadhaar, Land Documents; Bank Documents",
-      "₹6,000 per year deposited directly into bank accounts via DBT in three instalments of ₹2,000 each.",
+      "• ₹6,000 per year deposited directly into bank accounts via DBT in three instalments of ₹2,000 each.\n• Direct credit without any intermediary commissions.\n• Immediate financial assistance during agricultural seasons.",
       "1. Register on PM-KISAN portal (pmkisan.gov.in)\n2. Complete Aadhaar e-KYC\n3. Upload land records and bank details\n4. Submit for State verification",
       "https://pmkisan.gov.in",
       "2026-12-31",
@@ -979,14 +987,14 @@ export function generateSampleData(): { headers: string[]; rows: (string | numbe
     ],
     [
       "Ayushman Bharat - PMJAY",
-      "World's largest government-funded health assurance scheme providing secondary and tertiary care hospitalization cover.",
+      "• World's largest government-funded health assurance scheme.\n• Provides secondary and tertiary care hospitalization cover.\n• Fully paperless and cashless treatment at all empanelled hospitals.",
       "Ministry of Health & Family Welfare",
       "Central",
       "",
       "Healthcare",
       "Economically vulnerable families identified by SECC 2011; Annual family income ≤ ₹2,50,000; No age restriction",
       "Aadhaar; Ration Card; Income Certificate",
-      "Cashless health insurance coverage up to ₹5 lakh per family per year for hospitalisation in empanelled hospitals.",
+      "• Cashless health insurance coverage up to ₹5 lakh per family per year.\n• Pre and post-hospitalization expense coverage.\n• Universal portability across all public and private empanelled hospitals.",
       "1. Check eligibility on mera.pmjay.gov.in\n2. Visit nearest CSC or empanelled hospital with Aadhaar\n3. Generate Ayushman Golden Card",
       "https://pmjay.gov.in",
       "2026-12-31",
@@ -994,14 +1002,14 @@ export function generateSampleData(): { headers: string[]; rows: (string | numbe
     ],
     [
       "Mukhyamantri Baliraja Shetkari Yojana",
-      "Electricity bill concession and power tariff assistance for agricultural pump sets owned by farmers.",
+      "• Concession and power tariff assistance for agricultural pump sets.\n• Special state relief program for registered farmers in Maharashtra.\n• Facilitates sustainable agriculture through affordable irrigation.",
       "Department of Energy & Agriculture",
       "State",
       "Maharashtra",
       "Agriculture",
       "Registered agricultural electricity consumers in Maharashtra; Farmers with active pump connections",
       "Aadhaar, Electricity Bill; Land Documents; 7/12 Extract",
-      "Free daytime electricity and full subsidy on agricultural power bills for up to 5 years.",
+      "• Free daytime electricity for agricultural pump operations.\n• Full subsidy on agricultural power bills for up to 5 years.\n• Relief from arrears and interest on overdue irrigation charges.",
       "Apply through Mahavitaran portal or visit local Mahavitaran sub-division office with electricity consumer number.",
       "https://mahadiscom.in",
       "2026-11-30",

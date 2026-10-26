@@ -3,6 +3,7 @@ import { CheckCircle2, AlertCircle, ExternalLink, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { PointWiseList } from "@/components/PointWiseList";
 import type { MatchResult } from "@/lib/matching";
 import { getSchemeVideo } from "@/lib/video-helpers";
 
@@ -32,7 +33,14 @@ export function SchemeCard({ m }: { m: MatchResult }) {
       </div>
       <Progress value={m.percent} className="my-3 h-1.5" />
       <p className="text-sm font-medium text-success">You may be eligible</p>
-      <p className="mt-1 text-sm text-muted-foreground">{s.benefits}</p>
+      <div className="mt-1">
+        <PointWiseList
+          text={s.benefits}
+          maxItems={2}
+          inlineIfSingle
+          itemClassName="text-sm text-muted-foreground line-clamp-2"
+        />
+      </div>
       <div className="mt-4 space-y-1.5 text-sm">
         {m.reasons.slice(0, 3).map((r) => (
           <div key={r} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />{r}</div>

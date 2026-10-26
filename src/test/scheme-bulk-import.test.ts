@@ -292,7 +292,7 @@ describe("scheme-bulk-import utility tests", () => {
         },
       ];
 
-      // Missing name and URL
+      // Missing name (URL is optional, so empty URL is not an error)
       const invalidRow = {
         "Scheme Name": "",
         "Official Website URL": "",
@@ -301,7 +301,17 @@ describe("scheme-bulk-import utility tests", () => {
       const invalidResult = validateRowPayload(invalidPayload, invalidRow, 0, existing);
       expect(invalidResult.status).toBe("invalid");
       expect(invalidResult.errors).toContain("Scheme Name is required");
-      expect(invalidResult.errors).toContain("Official Website URL is required");
+      expect(invalidResult.errors).not.toContain("Official Website URL is required");
+
+      // Invalid URL format when URL is provided
+      const invalidUrlRow = {
+        "Scheme Name": "Scheme With Malformed URL",
+        "Official Website URL": "invalid-url-without-domain",
+      };
+      const invalidUrlPayload = transformRowToPayload(invalidUrlRow, mapping);
+      const invalidUrlResult = validateRowPayload(invalidUrlPayload, invalidUrlRow, 0, existing);
+      expect(invalidUrlResult.status).toBe("invalid");
+      expect(invalidUrlResult.errors).toContain("Invalid Official Website URL (e.g. https://example.gov.in)");
 
       // Duplicate scheme
       const dupRow = {
@@ -443,6 +453,123 @@ describe("scheme-bulk-import utility tests", () => {
       const payload3 = transformRowToPayload(parsed.data[2]!, mapping);
       expect(payload3.name).toBe("PM Yuva Internship Scheme");
       expect(payload3.apply_url).toBe("https://pminternship.mca.gov.in");
+    });
+  });
+
+  describe("Acceptance Criteria: Optional Official Website URL and Tutorial Video handling", () => {
+    const defaultMapping = {
+      "Scheme Name": "name" as const,
+      "Official Website URL": "apply_url" as const,
+      "Application Tutorial Video": "application_video_url" as const,
+      Description: "description" as const,
+      Department: "ministry" as const,
+    };
+
+    it("1. A scheme with an official website URL and a YouTube tutorial link uploads and validates successfully", () => {
+      const row = {
+        "Scheme Name": "Scheme With Both Links",
+        "Official Website URL": "https://service.gov.in",
+        "Application Tutorial Video": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        Description: "Complete scheme details",
+        Department: "Ministry of Social Justice",
+      };
+      const payload = transformRowToPayload(row, defaultMapping);
+      expect(payload.name).toBe("Scheme With Both Links");
+      expect(payload.apply_url).toBe("https://service.gov.in");
+      expect(payload.application_video_url).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      expect(payload.video_type).toBe("youtube");
+
+      const result = validateRowPayload(payload, row, 0, []);
+      expect(result.status).toBe("valid");
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("2. A scheme without an official website URL uploads and validates successfully", () => {
+      const row = {
+        "Scheme Name": "Scheme Without Official URL",
+        "Official Website URL": "",
+        "Application Tutorial Video": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        Description: "No website available yet",
+        Department: "Department of Agriculture",
+      };
+      const payload = transformRowToPayload(row, defaultMapping);
+      expect(payload.name).toBe("Scheme Without Official URL");
+      expect(payload.apply_url).toBe("");
+      expect(payload.application_video_url).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      expect(payload.video_type).toBe("youtube");
+
+      const result = validateRowPayload(payload, row, 0, []);
+      expect(result.status).toBe("valid");
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("3. A scheme without an application tutorial video uploads and validates successfully", () => {
+      const row = {
+        "Scheme Name": "Scheme Without Tutorial Video",
+        "Official Website URL": "https://portal.gov.in",
+        "Application Tutorial Video": "",
+        Description: "No tutorial video available",
+        Department: "Ministry of Education",
+      };
+      const payload = transformRowToPayload(row, defaultMapping);
+      expect(payload.name).toBe("Scheme Without Tutorial Video");
+      expect(payload.apply_url).toBe("https://portal.gov.in");
+      expect(payload.application_video_url).toBeNull();
+      expect(payload.video_type).toBeNull();
+
+      const result = validateRowPayload(payload, row, 0, []);
+      expect(result.status).toBe("valid");
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("4. A scheme without either link (no website URL and no tutorial video) uploads and validates successfully", () => {
+      const row = {
+        "Scheme Name": "Scheme Without Either Link",
+        "Official Website URL": "",
+        "Application Tutorial Video": "",
+        Description: "Neither link provided",
+        Department: "Ministry of Rural Development",
+      };
+      const payload = transformRowToPayload(row, defaultMapping);
+      expect(payload.name).toBe("Scheme Without Either Link");
+      expect(payload.apply_url).toBe("");
+      expect(payload.application_video_url).toBeNull();
+      expect(payload.video_type).toBeNull();
+
+      const result = validateRowPayload(payload, row, 0, []);
+      expect(result.status).toBe("valid");
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("5. Treats whitespace-only values as missing values without failing validation", () => {
+      const row = {
+        "Scheme Name": "Scheme With Whitespace Links",
+        "Official Website URL": "   ",
+        "Application Tutorial Video": "     \t  \n  ",
+        Description: "Whitespace in URL fields",
+        Department: "Ministry of Power",
+      };
+      const payload = transformRowToPayload(row, defaultMapping);
+      expect(payload.name).toBe("Scheme With Whitespace Links");
+      expect(payload.apply_url).toBe("");
+      expect(payload.application_video_url).toBeNull();
+      expect(payload.video_type).toBeNull();
+
+      const result = validateRowPayload(payload, row, 0, []);
+      expect(result.status).toBe("valid");
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("6. Continues validating URL format when an official website URL is provided", () => {
+      const row = {
+        "Scheme Name": "Scheme With Bad URL",
+        "Official Website URL": "invalid_url_not_a_domain",
+        "Application Tutorial Video": "",
+      };
+      const payload = transformRowToPayload(row, defaultMapping);
+      const result = validateRowPayload(payload, row, 0, []);
+      expect(result.status).toBe("invalid");
+      expect(result.errors).toContain("Invalid Official Website URL (e.g. https://example.gov.in)");
     });
   });
 });

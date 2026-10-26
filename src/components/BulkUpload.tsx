@@ -50,6 +50,7 @@ import {
   ParsedRowResult,
   downloadSchemeTemplate,
   getRowValue,
+  splitIntoPoints,
 } from "@/lib/scheme-bulk-import";
 
 type DuplicateHandlingMode = "skip" | "update" | "new";
@@ -310,7 +311,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
   const mappedTargets = useMemo(() => new Set(Object.values(columnMapping)), [columnMapping]);
   const hasNameMapped = mappedTargets.has("name");
   const hasUrlMapped = mappedTargets.has("apply_url");
-  const canProceedToPreview = hasNameMapped && hasUrlMapped;
+  const canProceedToPreview = hasNameMapped;
 
   // Inline row edits in preview
   const updateRowField = (id: string, field: "name" | "apply_url", val: string) => {
@@ -532,12 +533,11 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
             </div>
 
             {/* Validation alerts if required fields are missing */}
-            {(!hasNameMapped || !hasUrlMapped) && (
+            {!hasNameMapped && (
               <div className="mb-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 shrink-0" />
                 <span>
-                  <b>Required columns missing:</b>{" "}
-                  {[!hasNameMapped && "Scheme Name", !hasUrlMapped && "Official Website URL"].filter(Boolean).join(" and ")} must be mapped to proceed.
+                  <b>Required column missing:</b> Scheme Name must be mapped to proceed.
                 </span>
               </div>
             )}
@@ -556,7 +556,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                   {fileHeaders.map((header) => {
                     const mappedKey = columnMapping[header] || "__ignore__";
                     const isMapped = mappedKey !== "__ignore__";
-                    const isRequired = mappedKey === "name" || mappedKey === "apply_url";
+                    const isRequired = mappedKey === "name";
                     const samples = sampleValuesMap[header] || [];
 
                     return (
@@ -764,6 +764,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                     <th className="p-2 min-w-[130px]">Category & Level</th>
                     <th className="p-2 min-w-[160px]">Department</th>
                     <th className="p-2 min-w-[150px]">Required Documents</th>
+                    <th className="p-2 min-w-[170px]">Benefits</th>
                     <th className="p-2 min-w-[150px]">Eligibility</th>
                     <th className="p-2 min-w-[180px]">Official Website URL</th>
                     <th className="p-2 min-w-[110px]">Video Guide</th>
@@ -820,6 +821,11 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                             placeholder="Scheme Name (Required)"
                             className={`h-7 text-xs ${hasNameError ? "border-destructive focus-visible:ring-destructive" : ""}`}
                           />
+                          {r.payload.description && (
+                            <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5" title={r.payload.description}>
+                              {r.payload.description}
+                            </p>
+                          )}
                         </td>
 
                         {/* Category & Level */}
@@ -857,6 +863,27 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                           )}
                         </td>
 
+                        {/* Benefits (Point-wise) */}
+                        <td className="p-2 text-[11px] text-muted-foreground max-w-[190px]">
+                          {r.payload.benefits ? (
+                            <div className="flex flex-col gap-0.5" title={r.payload.benefits}>
+                              {splitIntoPoints(r.payload.benefits).slice(0, 2).map((b, idx) => (
+                                <div key={idx} className="truncate flex items-center gap-1">
+                                  <span className="h-1 w-1 rounded-full bg-primary shrink-0" />
+                                  <span className="truncate">{b}</span>
+                                </div>
+                              ))}
+                              {splitIntoPoints(r.payload.benefits).length > 2 && (
+                                <span className="text-[10px] text-primary">
+                                  +{splitIntoPoints(r.payload.benefits).length - 2} more points
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/60 italic text-[11px]">None listed</span>
+                          )}
+                        </td>
+
                         {/* Eligibility Criteria */}
                         <td className="p-2 text-[11px] text-muted-foreground max-w-[180px] truncate" title={r.payload.eligibility_text}>
                           {r.payload.eligibility_text || "—"}
@@ -868,7 +895,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                             <Input
                               value={r.payload.apply_url}
                               onChange={(e) => updateRowField(r.id, "apply_url", e.target.value)}
-                              placeholder="https://..."
+                              placeholder="https://... (Optional)"
                               className={`h-7 text-xs ${hasUrlError ? "border-destructive focus-visible:ring-destructive" : ""}`}
                             />
                             {r.payload.apply_url && !hasUrlError && (
@@ -896,7 +923,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                               {r.payload.video_type === "youtube" ? "YouTube" : "Video"}
                             </span>
                           ) : (
-                            <span className="text-muted-foreground/60">—</span>
+                            <span className="text-muted-foreground/60 text-[11px]" title="No tutorial video provided">No Video</span>
                           )}
                         </td>
 

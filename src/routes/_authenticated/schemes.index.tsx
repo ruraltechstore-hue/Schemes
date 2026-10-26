@@ -41,8 +41,8 @@ function AllSchemes() {
               {eligible && <Badge className="bg-success text-success-foreground">You may be eligible · {percent}%</Badge>}</div>
             <h3 className="mt-3 text-lg font-semibold">{s.name}</h3>
             <p className="text-xs text-muted-foreground">{s.ministry}</p>
-            <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{s.description}</p>
-            <p className="mt-2 text-sm font-medium">{s.benefits}</p>
+            <p className="mt-2 line-clamp-2 text-sm text-muted-foreground whitespace-pre-line">{s.description}</p>
+            <p className="mt-2 text-sm font-medium line-clamp-2 whitespace-pre-line">{s.benefits}</p>
           </Link>
         ))}
       </div>

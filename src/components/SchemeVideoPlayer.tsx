@@ -1,7 +1,7 @@
 import { Video, Youtube, ExternalLink, PlaySquare } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getYouTubeEmbedUrl } from "@/lib/video-helpers";
+import { getYouTubeEmbedUrl, isYouTubeUrl } from "@/lib/video-helpers";
 
 interface SchemeVideoPlayerProps {
   videoUrl?: string | null;
@@ -17,8 +17,10 @@ export function SchemeVideoPlayer({
   applyUrl,
 }: SchemeVideoPlayerProps) {
   const hasVideo = !!videoUrl?.trim();
-  const isYoutube = videoType === "youtube" || (hasVideo && videoUrl!.includes("youtu"));
+  const isYoutube = videoType === "youtube" || (hasVideo && isYouTubeUrl(videoUrl!));
   const ytEmbedUrl = hasVideo && isYoutube ? getYouTubeEmbedUrl(videoUrl!) : null;
+  const isUploaded = hasVideo && videoType === "uploaded";
+  const hasPlayableVideo = (isYoutube && !!ytEmbedUrl) || isUploaded;
 
   return (
     <div className="rounded-lg border bg-card p-6 shadow-card space-y-4">
@@ -38,7 +40,7 @@ export function SchemeVideoPlayer({
           </div>
         </div>
 
-        {hasVideo && (
+        {hasPlayableVideo && (
           <div>
             {isYoutube ? (
               <Badge variant="outline" className="gap-1 border-red-500/30 text-red-600 bg-red-500/5 text-xs">
@@ -56,7 +58,7 @@ export function SchemeVideoPlayer({
       </div>
 
       {/* Video Content or Empty State */}
-      {hasVideo ? (
+      {hasPlayableVideo ? (
         <div className="space-y-3">
           <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-950 shadow-inner border border-border/50">
             {isYoutube && ytEmbedUrl ? (
@@ -91,10 +93,10 @@ export function SchemeVideoPlayer({
             <Video className="h-7 w-7 stroke-[1.5]" />
           </div>
           <h3 className="text-base font-semibold text-foreground">
-            Application tutorial video coming soon
+            No YouTube tutorial link provided for this scheme.
           </h3>
           <p className="mt-1.5 max-w-md text-xs text-muted-foreground leading-relaxed">
-            A comprehensive, step-by-step video guide for <b>{schemeName}</b> is currently being prepared by administrators. In the meantime, you can review the required documents and application steps above.
+            A comprehensive, step-by-step video guide for <b>{schemeName}</b> is currently not available. In the meantime, you can review the required documents and application steps above.
           </p>
           {applyUrl && (
             <div className="mt-4">

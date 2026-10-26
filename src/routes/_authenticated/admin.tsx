@@ -252,6 +252,7 @@ function Admin() {
 
     const rowToSave: any = {
       ...row,
+      apply_url: f.apply_url?.trim() || "",
       state: f.level === "State" ? f.state || null : null,
       application_video_url: f.application_video_url || null,
       video_type: f.video_type || null,
@@ -755,13 +756,12 @@ function Admin() {
                   </div>
                 ) : (
                   <div>
-                    <Label>Official application URL *</Label>
+                    <Label>Official application URL</Label>
                     <Input
                       type="url"
-                      required
                       value={f.apply_url}
                       onChange={(x) => setF({ ...f, apply_url: x.target.value })}
-                      placeholder="https://..."
+                      placeholder="https://... (Optional)"
                     />
                   </div>
                 )}
@@ -769,13 +769,12 @@ function Admin() {
 
               {f.level === "State" && (
                 <div>
-                  <Label>Official application URL *</Label>
+                  <Label>Official application URL</Label>
                   <Input
                     type="url"
-                    required
                     value={f.apply_url}
                     onChange={(x) => setF({ ...f, apply_url: x.target.value })}
-                    placeholder="https://..."
+                    placeholder="https://... (Optional)"
                   />
                 </div>
               )}

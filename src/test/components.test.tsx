@@ -16,7 +16,7 @@ describe("SchemeVideoPlayer Component", () => {
 
     expect(screen.getByText("How to Apply — Video Guide")).toBeInTheDocument();
     expect(
-      screen.getByText("Application tutorial video coming soon")
+      screen.getByText("No YouTube tutorial link provided for this scheme.")
     ).toBeInTheDocument();
     expect(
       screen.getAllByText(/Pradhan Mantri Awas Yojana/i).length
@@ -59,5 +59,63 @@ describe("SchemeVideoPlayer Component", () => {
       "https://example.supabase.co/storage/v1/object/public/scheme-videos/tutorial.mp4"
     );
     expect(video?.hasAttribute("controls")).toBe(true);
+  });
+
+  it("does not show missing message when YouTube tutorial link is provided", () => {
+    render(
+      <SchemeVideoPlayer
+        schemeName="PM-KISAN Samman Nidhi"
+        videoUrl="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        videoType="youtube"
+        applyUrl="https://pmkisan.gov.in"
+      />
+    );
+
+    expect(
+      screen.queryByText("No YouTube tutorial link provided for this scheme.")
+    ).toBeNull();
+  });
+
+  it("handles scheme without either link (no website URL and no video) and omits apply portal button", () => {
+    render(
+      <SchemeVideoPlayer
+        schemeName="Rural Welfare Scheme"
+        videoUrl={null}
+        videoType={null}
+        applyUrl=""
+      />
+    );
+
+    expect(
+      screen.getByText("No YouTube tutorial link provided for this scheme.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Visit Official Application Portal")).toBeNull();
+  });
+
+  it("displays missing tutorial link message separately for schemes whose tutorial link is missing", () => {
+    // Scheme A: has YouTube link
+    const { unmount: unmountA } = render(
+      <SchemeVideoPlayer
+        schemeName="Scheme With Video"
+        videoUrl="https://youtu.be/dQw4w9WgXcQ"
+        videoType="youtube"
+      />
+    );
+    expect(
+      screen.queryByText("No YouTube tutorial link provided for this scheme.")
+    ).toBeNull();
+    unmountA();
+
+    // Scheme B: missing YouTube link
+    render(
+      <SchemeVideoPlayer
+        schemeName="Scheme Without Video"
+        videoUrl={null}
+        videoType={null}
+      />
+    );
+    expect(
+      screen.getByText("No YouTube tutorial link provided for this scheme.")
+    ).toBeInTheDocument();
   });
 });
