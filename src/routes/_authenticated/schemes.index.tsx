@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
 import { useMatches } from "@/hooks/use-app-data";
 import { SCHEME_CATEGORIES } from "@/lib/constants";
+import { splitIntoPoints } from "@/lib/point-helpers";
 
 export default AllSchemes;
 
@@ -43,6 +44,12 @@ function AllSchemes() {
             <p className="text-xs text-muted-foreground">{s.ministry}</p>
             <p className="mt-2 line-clamp-2 text-sm text-muted-foreground whitespace-pre-line">{s.description}</p>
             <p className="mt-2 text-sm font-medium line-clamp-2 whitespace-pre-line">{s.benefits}</p>
+            {s.eligibility_text && (
+              <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground/80">Eligibility: </span>
+                {splitIntoPoints(s.eligibility_text).join(" • ")}
+              </p>
+            )}
           </Link>
         ))}
       </div>

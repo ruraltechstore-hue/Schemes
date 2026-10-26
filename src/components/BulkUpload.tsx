@@ -843,23 +843,24 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                           {r.payload.ministry || "—"}
                         </td>
 
-                        {/* Required Documents */}
-                        <td className="p-2">
+                        {/* Required Documents (Point-wise) */}
+                        <td className="p-2 text-[11px] text-muted-foreground max-w-[190px]">
                           {r.payload.required_documents.length > 0 ? (
-                            <div className="flex flex-wrap gap-1 max-w-[180px]">
+                            <div className="flex flex-col gap-0.5" title={r.payload.required_documents.join(", ")}>
                               {r.payload.required_documents.slice(0, 3).map((doc, idx) => (
-                                <span key={idx} className="px-1.5 py-0.2 rounded bg-muted text-[10px] border">
-                                  {doc}
-                                </span>
+                                <div key={idx} className="truncate flex items-center gap-1">
+                                  <span className="h-1 w-1 rounded-full bg-primary shrink-0" />
+                                  <span className="truncate">{doc}</span>
+                                </div>
                               ))}
                               {r.payload.required_documents.length > 3 && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  +{r.payload.required_documents.length - 3} more
+                                <span className="text-[10px] text-primary">
+                                  +{r.payload.required_documents.length - 3} more documents
                                 </span>
                               )}
                             </div>
                           ) : (
-                            <span className="text-muted-foreground italic text-[11px]">None listed</span>
+                            <span className="text-muted-foreground/60 italic text-[11px]">None listed</span>
                           )}
                         </td>
 
@@ -884,9 +885,25 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                           )}
                         </td>
 
-                        {/* Eligibility Criteria */}
-                        <td className="p-2 text-[11px] text-muted-foreground max-w-[180px] truncate" title={r.payload.eligibility_text}>
-                          {r.payload.eligibility_text || "—"}
+                        {/* Eligibility Criteria (Point-wise) */}
+                        <td className="p-2 text-[11px] text-muted-foreground max-w-[190px]">
+                          {r.payload.eligibility_text ? (
+                            <div className="flex flex-col gap-0.5" title={r.payload.eligibility_text}>
+                              {splitIntoPoints(r.payload.eligibility_text).slice(0, 2).map((e, idx) => (
+                                <div key={idx} className="truncate flex items-center gap-1">
+                                  <span className="h-1 w-1 rounded-full bg-primary shrink-0" />
+                                  <span className="truncate">{e}</span>
+                                </div>
+                              ))}
+                              {splitIntoPoints(r.payload.eligibility_text).length > 2 && (
+                                <span className="text-[10px] text-primary">
+                                  +{splitIntoPoints(r.payload.eligibility_text).length - 2} more points
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/60 italic text-[11px]">None listed</span>
+                          )}
                         </td>
 
                         {/* Official Website URL (editable if error) */}

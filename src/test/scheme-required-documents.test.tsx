@@ -79,6 +79,26 @@ describe("splitRequiredDocuments Helper", () => {
     expect(splitRequiredDocuments([])).toEqual([]);
     expect(splitRequiredDocuments("   ")).toEqual([]);
   });
+
+  it("splits bulleted lists of documents with leading bullet symbols and newlines", () => {
+    const input = "• Aadhaar Card\n• Land Documents\n• Bank Documents";
+    const result = splitRequiredDocuments(input);
+    expect(result).toEqual([
+      "Aadhaar Card",
+      "Land Documents",
+      "Bank Documents",
+    ]);
+  });
+
+  it("splits inline bullet points for documents on a single line", () => {
+    const input = "• Aadhaar Card • Electricity Bill • 7/12 Extract";
+    const result = splitRequiredDocuments(input);
+    expect(result).toEqual([
+      "Aadhaar Card",
+      "Electricity Bill",
+      "7/12 Extract",
+    ]);
+  });
 });
 
 describe("SchemeRequiredDocuments Component", () => {

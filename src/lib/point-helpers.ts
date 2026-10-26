@@ -34,6 +34,15 @@ export function isPointWise(value: unknown): boolean {
     if (parts.length > 1) return true;
   }
 
+  // Contains multiple sentence-like criteria separated by full stop
+  if (/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i.test(str)) {
+    const parts = str
+      .split(/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length > 1) return true;
+  }
+
   return false;
 }
 
@@ -74,6 +83,12 @@ export function splitIntoPoints(value: unknown): string[] {
           .map((s) => s.trim())
           .filter(Boolean);
         rawSegments.push(...subItems);
+      } else if (trimmedLine.includes(";")) {
+        const subItems = trimmedLine
+          .split(/;+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        rawSegments.push(...subItems);
       } else {
         rawSegments.push(trimmedLine);
       }
@@ -107,8 +122,19 @@ export function splitIntoPoints(value: unknown): string[] {
     } else {
       rawSegments = [normalized];
     }
+  } else if (/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i.test(normalized)) {
+    // 6. Period-separated criteria e.g. "Criteria 1. Criteria 2. Criteria 3."
+    const parts = normalized
+      .split(/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length > 1) {
+      rawSegments = parts;
+    } else {
+      rawSegments = [normalized];
+    }
   } else {
-    // 6. Plain single paragraph / sentence
+    // 7. Plain single paragraph / sentence
     rawSegments = [normalized];
   }
 
@@ -122,6 +148,11 @@ export function splitIntoPoints(value: unknown): string[] {
 
     // Strip trailing semicolon or dangling comma at end of point
     item = item.replace(/[;,]+$/, "").trim();
+
+    // Strip trailing period if there were multiple segments or leading bullet was stripped
+    if (rawSegments.length > 1) {
+      item = item.replace(/\.+$/, "").trim();
+    }
 
     if (item.length > 0) {
       cleaned.push(item);

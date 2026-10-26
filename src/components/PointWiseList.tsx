@@ -3,7 +3,7 @@ import { Check } from "lucide-react";
 import { splitIntoPoints, isPointWise } from "@/lib/point-helpers";
 
 export interface PointWiseListProps {
-  text?: string | null | undefined;
+  text?: string | string[] | null | undefined;
   className?: string;
   itemClassName?: string;
   bulletClassName?: string;
@@ -27,18 +27,23 @@ export function PointWiseList({
   inlineIfSingle = false,
   emptyFallback = null,
 }: PointWiseListProps) {
-  if (!text || !text.trim()) {
+  if (
+    text === null ||
+    text === undefined ||
+    (typeof text === "string" && !text.trim()) ||
+    (Array.isArray(text) && text.length === 0)
+  ) {
     return <>{emptyFallback}</>;
   }
 
-  const rawTrimmed = text.trim();
-  const points = splitIntoPoints(rawTrimmed);
+  const rawTrimmed = typeof text === "string" ? text.trim() : "";
+  const points = splitIntoPoints(text);
 
   if (points.length === 0) {
     return <>{emptyFallback}</>;
   }
 
-  const shouldRenderList = points.length > 1 || isPointWise(rawTrimmed);
+  const shouldRenderList = points.length > 1 || (rawTrimmed ? isPointWise(rawTrimmed) : true);
 
   // If only a single point and inlineIfSingle is requested, return inline
   if (!shouldRenderList && inlineIfSingle) {

@@ -13,6 +13,7 @@ import { SchemeRequiredDocuments } from "@/components/SchemeRequiredDocuments";
 import { PointWiseList } from "@/components/PointWiseList";
 import { useApplications, useMatches } from "@/hooks/use-app-data";
 import { getSchemeVideo } from "@/lib/video-helpers";
+import { splitRequiredDocuments } from "@/lib/document-helpers";
 import { APP_STATUSES } from "@/lib/constants";
 
 export default Detail;
@@ -74,10 +75,38 @@ function Detail() {
             />
           </div>
         )}
+        {s.eligibility_text && (
+          <div className="mt-4 rounded-md border border-border/70 bg-muted/40 p-4">
+            <b>Eligibility Criteria:</b>
+            <PointWiseList
+              text={s.eligibility_text}
+              icon="bullet"
+              inlineIfSingle
+              className="mt-1"
+            />
+          </div>
+        )}
+        {splitRequiredDocuments(s.required_documents).length > 0 && (
+          <div className="mt-4 rounded-md border border-border/70 bg-muted/20 p-4">
+            <b>Required Documents:</b>
+            <PointWiseList
+              text={splitRequiredDocuments(s.required_documents)}
+              icon="bullet"
+              className="mt-1"
+            />
+          </div>
+        )}
         {((s.eligibility as any)?.application_process || (s.eligibility as any)?.application_deadline) && (
           <div className="mt-4 text-sm">
             {(s.eligibility as any)?.application_process && (
-              <p className="mb-2"><b>Application Process:</b> {(s.eligibility as any).application_process}</p>
+              <div className="mb-2">
+                <b>Application Process:</b>
+                <PointWiseList
+                  text={(s.eligibility as any).application_process}
+                  inlineIfSingle
+                  className="mt-1"
+                />
+              </div>
             )}
             {(s.eligibility as any)?.application_deadline && (
               <p><b>Deadline:</b> {(s.eligibility as any).application_deadline}</p>
@@ -115,7 +144,20 @@ function Detail() {
           <p className={`mt-2 text-sm font-medium ${m.eligible ? "text-success" : "text-destructive"}`}>
             {m.eligible ? "You may be eligible" : "You may not meet some criteria"}
           </p>
-          <p className="mt-4 text-sm text-muted-foreground">Eligibility: {s.eligibility_text}</p>
+          {s.eligibility_text && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Eligibility:
+              </p>
+              <PointWiseList
+                text={s.eligibility_text}
+                icon="bullet"
+                inlineIfSingle
+                className="mt-1"
+                itemClassName="text-sm text-muted-foreground"
+              />
+            </div>
+          )}
           <div className="mt-3 space-y-1.5 text-sm">
             {m.reasons.map((r) => <div key={r} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />{r}</div>)}
             {m.missing.map((r) => <div key={r} className="flex gap-2"><AlertCircle className="mt-0.5 h-4 w-4 text-warning" />{r}</div>)}

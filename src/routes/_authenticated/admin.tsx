@@ -30,6 +30,8 @@ import type { Eligibility, Scheme } from "@/lib/matching";
 import { getSchemeVideo, isYouTubeUrl } from "@/lib/video-helpers";
 import { CASTE_CATEGORIES, DOC_TYPES, GENDERS, OCCUPATIONS, SCHEME_CATEGORIES, STATES } from "@/lib/constants";
 import { splitRequiredDocuments } from "@/lib/document-helpers";
+import { PointWiseList } from "@/components/PointWiseList";
+import { splitIntoPoints } from "@/lib/point-helpers";
 
 export default Admin;
 
@@ -785,8 +787,14 @@ function Admin() {
                   rows={2}
                   value={f.benefits}
                   onChange={(x) => setF({ ...f, benefits: x.target.value })}
-                  placeholder="Details of financial assistance, subsidy, or physical grants"
+                  placeholder="Details of financial assistance, subsidy, or physical grants (separate points with semicolons, bullets, or newlines)"
                 />
+                {f.benefits && splitIntoPoints(f.benefits).length > 1 && (
+                  <div className="mt-1.5 rounded border bg-muted/40 p-2 text-xs">
+                    <span className="font-medium text-muted-foreground">Point-wise Preview:</span>
+                    <PointWiseList text={f.benefits} icon="check" className="mt-1" itemClassName="text-xs text-muted-foreground" />
+                  </div>
+                )}
               </div>
 
               <div>
@@ -795,8 +803,14 @@ function Admin() {
                   rows={2}
                   value={f.eligibility_text}
                   onChange={(x) => setF({ ...f, eligibility_text: x.target.value })}
-                  placeholder="Who is eligible to apply for this scheme"
+                  placeholder="Who is eligible to apply for this scheme (separate points with semicolons, bullets, or newlines)"
                 />
+                {f.eligibility_text && splitIntoPoints(f.eligibility_text).length > 1 && (
+                  <div className="mt-1.5 rounded border bg-muted/40 p-2 text-xs">
+                    <span className="font-medium text-muted-foreground">Point-wise Preview:</span>
+                    <PointWiseList text={f.eligibility_text} icon="bullet" className="mt-1" itemClassName="text-xs text-muted-foreground" />
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">

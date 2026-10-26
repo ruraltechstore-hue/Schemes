@@ -89,7 +89,34 @@ describe("point-helpers utility tests", () => {
       ]);
     });
 
-    it("does not split numbers with decimals like 2.5 Lakh or ₹6,000.50", () => {
+    it("splits eligibility criteria from bulk upload format with semicolons", () => {
+      const input = "Residential households with grid connectivity; Rooftop area available; Annual income under ₹8,00,000";
+      expect(splitIntoPoints(input)).toEqual([
+        "Residential households with grid connectivity",
+        "Rooftop area available",
+        "Annual income under ₹8,00,000",
+      ]);
+    });
+
+    it("splits eligibility criteria formatted with full stops between criteria", () => {
+      const input = "Must be an Indian citizen. Age between 18 and 50 years. Annual household income under ₹3 Lakh.";
+      expect(splitIntoPoints(input)).toEqual([
+        "Must be an Indian citizen",
+        "Age between 18 and 50 years",
+        "Annual household income under ₹3 Lakh",
+      ]);
+    });
+
+    it("splits bulleted eligibility points and strips trailing periods", () => {
+      const input = "• Landholding farmer families with cultivable land.\n• Valid bank account linked with Aadhaar.\n• Age 18+.";
+      expect(splitIntoPoints(input)).toEqual([
+        "Landholding farmer families with cultivable land",
+        "Valid bank account linked with Aadhaar",
+        "Age 18+",
+      ]);
+    });
+
+    it("does not split numbers with decimals like 2.5 Lakh or ₹6,00,0.50", () => {
       const input = "Income ceiling of 2.5 Lakh per year with ₹6,000.50 assistance";
       expect(splitIntoPoints(input)).toEqual([
         "Income ceiling of 2.5 Lakh per year with ₹6,000.50 assistance",
@@ -157,5 +184,28 @@ describe("PointWiseList Component", () => {
     expect(screen.getByText("Benefit 2")).toBeInTheDocument();
     expect(screen.queryByText("Benefit 3")).toBeNull();
     expect(screen.getByText("+2 more")).toBeInTheDocument();
+  });
+
+  it("renders bulk-uploaded semicolon-separated eligibility criteria as a bulleted list", () => {
+    const text = "Residential households with grid connectivity; Rooftop area available; Annual income under ₹8,00,000";
+    const { container } = render(<PointWiseList text={text} />);
+
+    const listItems = screen.getAllByRole("listitem");
+    expect(listItems).toHaveLength(3);
+    expect(screen.getByText("Residential households with grid connectivity")).toBeInTheDocument();
+    expect(screen.getByText("Rooftop area available")).toBeInTheDocument();
+    expect(screen.getByText("Annual income under ₹8,00,000")).toBeInTheDocument();
+    expect(container.querySelector("ul")).not.toBeNull();
+  });
+
+  it("renders full-stop separated eligibility criteria as a bulleted list", () => {
+    const text = "Must be an Indian citizen. Age between 18 and 50 years. Annual household income under ₹3 Lakh.";
+    render(<PointWiseList text={text} />);
+
+    const listItems = screen.getAllByRole("listitem");
+    expect(listItems).toHaveLength(3);
+    expect(screen.getByText("Must be an Indian citizen")).toBeInTheDocument();
+    expect(screen.getByText("Age between 18 and 50 years")).toBeInTheDocument();
+    expect(screen.getByText("Annual household income under ₹3 Lakh")).toBeInTheDocument();
   });
 });

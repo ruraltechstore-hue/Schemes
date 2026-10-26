@@ -57,17 +57,18 @@ export function splitRequiredDocuments(value: unknown): string[] {
     if (!rawStr || typeof rawStr !== "string") continue;
 
     // Split on:
-    // 1. Commas, semicolons, newlines, pipes: [,;\n\r|]+
-    // 2. Full stops (.) separating documents:
+    // 1. Commas, semicolons, newlines, pipes, bullets: [,;\n\r|•▪▫✦✔✓]+
+    // 2. Numbered items: (?<=\s|^)(?:\d+[\.\)]|\(\d+\))\s+(?=[A-Za-z0-9])
+    // 3. Full stops (.) separating documents:
     //    - Preceded by a non-digit / non-whitespace character (not e.g. list numbering "1.")
     //    - Not preceded by common honorifics (dr, mr, etc.)
     //    - Followed by whitespace, end of string, or the next document start
     const segments = rawStr
-      .split(/(?:[,;\n\r|]+|(?<!\b(?:dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\s*\.+(?:\s+|$|\s*(?=[A-Za-z0-9])))/i)
+      .split(/(?:[,;\n\r|•▪▫✦✔✓]+|(?<!\b(?:dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\s*\.+(?:\s+|$|\s*(?=[A-Za-z0-9]))|(?<=\s|^)(?:\d+[\.\)]|\(\d+\))\s+(?=[A-Za-z0-9]))/i)
       .map((seg) => {
         return seg
           .replace(/^["']|["']$/g, "") // strip outer quotes
-          .replace(/^\s*(?:[\*\-•]+|\d+[\.\)])\s*/, "") // strip leading list markers or numbering
+          .replace(/^\s*(?:[\*\-•▪▫✦✔✓>]+|(?:\d+[\.\)]|\(\d+\)))\s*/, "") // strip leading list markers or numbering
           .replace(/\s*\.+\s*$/, "") // strip any trailing period
           .trim();
       })

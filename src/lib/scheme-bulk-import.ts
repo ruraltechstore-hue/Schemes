@@ -682,14 +682,16 @@ export function extractStructuredEligibility(text: string): Partial<Eligibility>
     structured.min_age = parseInt(ageRangeMatch[1], 10);
     structured.max_age = parseInt(ageRangeMatch[2], 10);
   } else {
-    const minAgeMatch = text.match(/(?:min(?:imum)?\s*age\s*(?:is|:)?\s*|age\s*(?:>=|above|over)\s*)(\d{1,2})/i);
+    const minAgeMatch =
+      text.match(/(?:min(?:imum)?\s*age\s*(?:is|:)?\s*|age\s*(?:>=|above|over)\s*)(\d{1,2})/i) ||
+      text.match(/age\s*(?:is|:)?\s*(\d{1,2})\s*(?:\+|plus|\band\s+above)/i);
     if (minAgeMatch && minAgeMatch[1]) structured.min_age = parseInt(minAgeMatch[1], 10);
     const maxAgeMatch = text.match(/(?:max(?:imum)?\s*age\s*(?:is|:)?\s*|age\s*(?:<=|below|under|up\s*to)\s*)(\d{1,2})/i);
     if (maxAgeMatch && maxAgeMatch[1]) structured.max_age = parseInt(maxAgeMatch[1], 10);
   }
 
   // Income match e.g. "Income <= 250000" or "Income under 3,00,000" or "Income up to 2.5 Lakh"
-  const incomeMatch = text.match(/(?:income|family income)\s*(?:<=|below|under|up\s*to|less\s*than|limit|:)?\s*([₹\d.,]+\s*(?:lakh|lakhs|cr|crore)?)/i);
+  const incomeMatch = text.match(/(?:income|family income)\s*(?:<=|below|under|up\s*to|less\s*than|limit|≤|:)?\s*([₹\d.,]+\s*(?:lakh|lakhs|cr|crore)?)/i);
   if (incomeMatch && incomeMatch[1]) {
     const parsedIncome = parseIndianNumber(incomeMatch[1]);
     if (parsedIncome) structured.max_income = parsedIncome;
@@ -977,8 +979,8 @@ export function generateSampleData(): { headers: string[]; rows: (string | numbe
       "Central",
       "",
       "Agriculture",
-      "Landholding farmer families with cultivable land; Valid bank account linked with Aadhaar; Age 18+",
-      "Aadhaar, Land Documents; Bank Documents",
+      "• Landholding farmer families with cultivable land.\n• Valid bank account linked with Aadhaar.\n• Age 18+.",
+      "• Aadhaar Card\n• Land Documents\n• Bank Documents",
       "• ₹6,000 per year deposited directly into bank accounts via DBT in three instalments of ₹2,000 each.\n• Direct credit without any intermediary commissions.\n• Immediate financial assistance during agricultural seasons.",
       "1. Register on PM-KISAN portal (pmkisan.gov.in)\n2. Complete Aadhaar e-KYC\n3. Upload land records and bank details\n4. Submit for State verification",
       "https://pmkisan.gov.in",
@@ -992,8 +994,8 @@ export function generateSampleData(): { headers: string[]; rows: (string | numbe
       "Central",
       "",
       "Healthcare",
-      "Economically vulnerable families identified by SECC 2011; Annual family income ≤ ₹2,50,000; No age restriction",
-      "Aadhaar; Ration Card; Income Certificate",
+      "• Economically vulnerable families identified by SECC 2011.\n• Annual family income ≤ ₹2,50,000.\n• No age restriction.",
+      "• Aadhaar Card\n• Ration Card\n• Income Certificate",
       "• Cashless health insurance coverage up to ₹5 lakh per family per year.\n• Pre and post-hospitalization expense coverage.\n• Universal portability across all public and private empanelled hospitals.",
       "1. Check eligibility on mera.pmjay.gov.in\n2. Visit nearest CSC or empanelled hospital with Aadhaar\n3. Generate Ayushman Golden Card",
       "https://pmjay.gov.in",
@@ -1007,8 +1009,8 @@ export function generateSampleData(): { headers: string[]; rows: (string | numbe
       "State",
       "Maharashtra",
       "Agriculture",
-      "Registered agricultural electricity consumers in Maharashtra; Farmers with active pump connections",
-      "Aadhaar, Electricity Bill; Land Documents; 7/12 Extract",
+      "• Registered agricultural electricity consumers in Maharashtra.\n• Farmers with active agricultural pump connections.",
+      "• Aadhaar Card\n• Electricity Bill\n• Land Documents\n• 7/12 Extract",
       "• Free daytime electricity for agricultural pump operations.\n• Full subsidy on agricultural power bills for up to 5 years.\n• Relief from arrears and interest on overdue irrigation charges.",
       "Apply through Mahavitaran portal or visit local Mahavitaran sub-division office with electricity consumer number.",
       "https://mahadiscom.in",

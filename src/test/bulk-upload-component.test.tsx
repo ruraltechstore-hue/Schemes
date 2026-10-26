@@ -60,9 +60,9 @@ describe("BulkUpload Component Integration Tests", () => {
     const { container } = renderBulkUpload(existingSchemes);
     fireEvent.click(screen.getByRole("button", { name: /bulk upload schemes/i }));
 
-    const csvContent = `"  Scheme_Name  ","Description","Department / Ministry","Official Website URL","Required Documents"
-"New Test Scheme","Description of scheme","Ministry of Agriculture","https://test.gov.in","Aadhaar, Land Documents; Bank Documents"
-"Existing Solar Scheme","Solar scheme description","Ministry of New Energy","https://solar.gov.in","Aadhaar; Electricity Bill"`;
+    const csvContent = `"  Scheme_Name  ","Description","Department / Ministry","Official Website URL","Required Documents","Eligibility Criteria"
+"New Test Scheme","Description of scheme","Ministry of Agriculture","https://test.gov.in","Aadhaar, Land Documents; Bank Documents","Farmers in Maharashtra; Age between 18 to 65"
+"Existing Solar Scheme","Solar scheme description","Ministry of New Energy","https://solar.gov.in","Aadhaar; Electricity Bill","Households with grid connectivity"`;
 
     const file = new File([csvContent], "test_schemes.csv", { type: "text/csv" });
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -79,6 +79,7 @@ describe("BulkUpload Component Integration Tests", () => {
     expect(screen.getAllByText("Department / Ministry").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Official Website URL").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Required Documents").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Eligibility Criteria").length).toBeGreaterThanOrEqual(1);
 
     // Verify sample values appear
     expect(screen.getByText(/"New Test Scheme"/i)).toBeInTheDocument();
@@ -105,6 +106,11 @@ describe("BulkUpload Component Integration Tests", () => {
     // Check parsed document badges
     expect(screen.getByText("Land Documents")).toBeInTheDocument();
     expect(screen.getByText("Bank Documents")).toBeInTheDocument();
+
+    // Check point-wise eligibility criteria rendered in preview table
+    expect(screen.getByText("Farmers in Maharashtra")).toBeInTheDocument();
+    expect(screen.getByText("Age between 18 to 65")).toBeInTheDocument();
+    expect(screen.getByText("Households with grid connectivity")).toBeInTheDocument();
   });
 
   it("allows switching back to adjust column mappings", async () => {

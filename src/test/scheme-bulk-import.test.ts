@@ -153,6 +153,15 @@ describe("scheme-bulk-import utility tests", () => {
         "Bank Passbook",
       ]);
     });
+
+    it("splits documents formatted with bullet points and newlines", () => {
+      const result = parseRequiredDocuments("• Aadhaar Card\n• Income Certificate\n• Land Documents");
+      expect(result).toEqual([
+        "Aadhaar",
+        "Income Certificate",
+        "Land Documents",
+      ]);
+    });
   });
 
   describe("parseIndianNumber", () => {
