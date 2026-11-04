@@ -20,7 +20,11 @@ export function getInitials(name?: string | null, email?: string | null): string
   if (cleanName) {
     const parts = cleanName.split(/\s+/).filter(Boolean);
     if (parts.length >= 2) {
-      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      const first = parts[0];
+      const last = parts[parts.length - 1];
+      if (first && last && first[0] && last[0]) {
+        return (first[0] + last[0]).toUpperCase();
+      }
     }
     if (cleanName.length >= 2) {
       return cleanName.slice(0, 2).toUpperCase();
@@ -30,7 +34,8 @@ export function getInitials(name?: string | null, email?: string | null): string
 
   const cleanEmail = email?.trim();
   if (cleanEmail) {
-    const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9]/g, "");
+    const firstPart = cleanEmail.split("@")[0];
+    const username = (firstPart ?? "").replace(/[^a-zA-Z0-9]/g, "");
     if (username.length >= 2) {
       return username.slice(0, 2).toUpperCase();
     }
@@ -89,18 +94,16 @@ export function formatAccountDate(dateString?: string | null): string {
  */
 export async function uploadAdminAvatar(
   userId: string,
-  file: File
+  file: File,
 ): Promise<{ signedUrl: string; path: string }> {
   const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
   const safeExt = extension === "jpeg" ? "jpg" : extension;
   const path = `${userId}/avatars/avatar-${Date.now()}.${safeExt}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from("documents")
-    .upload(path, file, {
-      contentType: file.type || (safeExt === "png" ? "image/png" : "image/jpeg"),
-      upsert: true,
-    });
+  const { error: uploadError } = await supabase.storage.from("documents").upload(path, file, {
+    contentType: file.type || (safeExt === "png" ? "image/png" : "image/jpeg"),
+    upsert: true,
+  });
 
   if (uploadError) {
     throw new Error(`Failed to upload avatar: ${uploadError.message}`);

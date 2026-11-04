@@ -15,9 +15,12 @@ import {
   Check,
   FileText,
   Copy,
+  Plus,
+  Trash2,
+  Files,
+  X,
+  FileCheck,
 } from "lucide-react";
-import Papa from "papaparse";
-import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -48,9 +51,12 @@ import {
   transformRowToPayload,
   validateRowPayload,
   ParsedRowResult,
+  ParsedFileData,
+  parseBulkFile,
   downloadSchemeTemplate,
   getRowValue,
   splitIntoPoints,
+  normalizeHeader,
 } from "@/lib/scheme-bulk-import";
 
 type DuplicateHandlingMode = "skip" | "update" | "new";
@@ -58,220 +64,240 @@ type DuplicateHandlingMode = "skip" | "update" | "new";
 export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"select" | "mapping" | "preview" | "importing" | "results">("select");
-  
-  // File data
-  const [fileName, setFileName] = useState("");
-  const [fileHeaders, setFileHeaders] = useState<string[]>([]);
-  const [rawRows, setRawRows] = useState<Record<string, any>[]>([]);
-  
-  // Mapping configuration: header -> target field key or __ignore__
-  const [columnMapping, setColumnMapping] = useState<Record<string, TargetFieldKey | "__ignore__">>({});
-  
+
+  // Multi-file state
+  const [uploadedFiles, setUploadedFiles] = useState<ParsedFileData[]>([]);
+  const [activeFileId, setActiveFileId] = useState<string>("");
+  const [isParsingFiles, setIsParsingFiles] = useState<boolean>(false);
+
   // Rows state for preview
   const [rows, setRows] = useState<ParsedRowResult[]>([]);
   const [duplicateHandling, setDuplicateHandling] = useState<DuplicateHandlingMode>("skip");
   const [filterTab, setFilterTab] = useState<"all" | "valid" | "duplicate" | "invalid">("all");
-  
+  const [fileFilter, setFileFilter] = useState<string>("all");
+
   // Import tracking
   const [currentImportName, setCurrentImportName] = useState("");
+  const [currentImportFile, setCurrentImportFile] = useState("");
   const [stats, setStats] = useState({ success: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
-  const [failureDetails, setFailureDetails] = useState<{ name: string; error: string }[]>([]);
+  const [perFileStats, setPerFileStats] = useState<
+    { name: string; success: number; updated: number; skipped: number; failed: number }[]
+  >([]);
+  const [failureDetails, setFailureDetails] = useState<{ name: string; error: string; file?: string | undefined }[]>([]);
   const [progress, setProgress] = useState(0);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
 
+  // Active file being configured in column mapping step
+  const activeFile = useMemo(() => {
+    return uploadedFiles.find((f) => f.id === activeFileId) || uploadedFiles[0] || null;
+  }, [uploadedFiles, activeFileId]);
+
+  const fileName = activeFile?.name || "";
+  const fileHeaders = useMemo(() => activeFile?.headers || [], [activeFile]);
+  const rawRows = useMemo(() => activeFile?.rawRows || [], [activeFile]);
+  const columnMapping = useMemo(() => activeFile?.columnMapping || {}, [activeFile]);
+
+  const totalSchemesCount = useMemo(() => {
+    return uploadedFiles.reduce((acc, f) => acc + f.rawRows.length, 0);
+  }, [uploadedFiles]);
+
   const reset = () => {
     setStep("select");
-    setFileName("");
-    setFileHeaders([]);
-    setRawRows([]);
-    setColumnMapping({});
+    setUploadedFiles([]);
+    setActiveFileId("");
     setRows([]);
     setProgress(0);
     setFailureDetails([]);
+    setPerFileStats([]);
+    setCurrentImportFile("");
+    setCurrentImportName("");
     setStats({ success: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
+    setFileFilter("all");
+    setFilterTab("all");
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  // Re-evaluates rows based on current column mapping
-  const recomputeRows = (
-    currentRawRows: Record<string, any>[],
-    currentMapping: Record<string, TargetFieldKey | "__ignore__">,
+  // Re-evaluates rows across all uploaded files
+  const recomputeAllRows = (
+    fileList: ParsedFileData[],
     mode: DuplicateHandlingMode
   ) => {
-    const computed = currentRawRows.map((raw, idx) => {
-      const payload = transformRowToPayload(raw, currentMapping);
-      const res = validateRowPayload(payload, raw, idx, existingSchemes);
-      // Set skip based on duplicate handling
-      if (res.status === "duplicate" && mode === "skip") {
-        res.skip = true;
-      }
-      return res;
+    const allResults: ParsedRowResult[] = [];
+    const seenSchemeNames = new Map<string, string>(); // name.toLowerCase() -> sourceFileName
+
+    fileList.forEach((f) => {
+      f.rawRows.forEach((raw, idx) => {
+        const payload = transformRowToPayload(raw, f.columnMapping);
+        const res = validateRowPayload(payload, raw, idx, existingSchemes);
+        res.sourceFileId = f.id;
+        res.sourceFileName = f.name;
+
+        const normName = payload.name?.trim().toLowerCase();
+        if (normName) {
+          if (seenSchemeNames.has(normName)) {
+            const firstSeenFile = seenSchemeNames.get(normName);
+            if (res.status === "valid") {
+              res.status = "duplicate";
+              res.warnings.push(
+                firstSeenFile === f.name
+                  ? "Duplicate scheme name within this file"
+                  : `Duplicate of scheme in "${firstSeenFile}"`
+              );
+            }
+          } else {
+            seenSchemeNames.set(normName, f.name);
+          }
+        }
+
+        if (res.status === "duplicate" && mode === "skip") {
+          res.skip = true;
+        }
+
+        allResults.push(res);
+      });
     });
-    setRows(computed);
+
+    setRows(allResults);
   };
 
-  // Helper to read file as text
-  const readFileAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      if (typeof file.text === "function") {
-        file.text().then(resolve).catch(reject);
-      } else {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve((e.target?.result as string) || "");
-        reader.onerror = () => reject(new Error("Failed to read file"));
-        reader.readAsText(file, "UTF-8");
-      }
-    });
-  };
+  // Handle uploaded file(s) - supports one or multiple files
+  const handleFiles = async (filesToAdd: FileList | File[] | null | undefined) => {
+    if (!filesToAdd || filesToAdd.length === 0) return;
+    const fileArray = Array.from(filesToAdd);
+    setIsParsingFiles(true);
 
-  // Handle uploaded file
-  const handleFile = async (file?: File) => {
-    if (!file) return;
     try {
-      let headers: string[] = [];
-      let parsedData: Record<string, any>[] = [];
+      const results = await Promise.allSettled(fileArray.map((f) => parseBulkFile(f)));
+      const successful: ParsedFileData[] = [];
+      const errors: string[] = [];
 
-      const isCsv = /\.csv$/i.test(file.name) || file.type === "text/csv";
-      const isExcel = /\.xlsx?$/i.test(file.name) || file.type.includes("spreadsheet");
-
-      if (isCsv) {
-        const rawText = await readFileAsText(file);
-        const cleanText = rawText.replace(/^\uFEFF/, "");
-        if (!cleanText.trim()) throw new Error("The uploaded CSV file is empty");
-
-        // Parse with PapaParse
-        let results = Papa.parse<Record<string, any>>(cleanText, {
-          header: true,
-          skipEmptyLines: "greedy",
-          dynamicTyping: false,
-        });
-
-        // Delimiter fallback: if single field or semicolon separated
-        if (
-          (!results.meta.fields || results.meta.fields.length <= 1) &&
-          cleanText.includes(";")
-        ) {
-          results = Papa.parse<Record<string, any>>(cleanText, {
-            header: true,
-            skipEmptyLines: "greedy",
-            delimiter: ";",
-            dynamicTyping: false,
-          });
-        }
-
-        // If PapaParse returned 0 fields or failed, fallback to XLSX parser
-        if (!results.meta.fields || results.meta.fields.length === 0 || !results.data || results.data.length === 0) {
-          const wb = XLSX.read(cleanText, { type: "string" });
-          const sheetName = wb.SheetNames[0];
-          if (!sheetName) throw new Error("Could not parse CSV content");
-          const ws = wb.Sheets[sheetName];
-          const sheetAoa = XLSX.utils.sheet_to_json<string[]>(ws!, { header: 1, blankrows: false });
-          if (!sheetAoa.length) throw new Error("The uploaded file has no content");
-          headers = (sheetAoa[0] || []).map((h) => String(h ?? "").replace(/^\uFEFF/, "").trim()).filter(Boolean);
-          parsedData = XLSX.utils.sheet_to_json<Record<string, any>>(ws!, { defval: "", raw: false });
+      results.forEach((res, idx) => {
+        if (res.status === "fulfilled") {
+          successful.push(res.value);
         } else {
-          headers = (results.meta.fields || []).map((h) => String(h).replace(/^\uFEFF/, "").trim()).filter(Boolean);
-          parsedData = results.data;
+          errors.push(res.reason?.message || `Failed to parse ${fileArray[idx]?.name}`);
         }
+      });
 
-        // Clean each row's keys so they are trimmed without BOM
-        parsedData = parsedData
-          .map((row) => {
-            const cleanRow: Record<string, any> = {};
-            for (const [k, v] of Object.entries(row)) {
-              const cleanK = String(k).replace(/^\uFEFF/, "").trim();
-              if (cleanK) {
-                cleanRow[cleanK] = v;
-              }
-            }
-            return cleanRow;
-          })
-          .filter((row) => Object.values(row).some((val) => String(val ?? "").trim().length > 0));
+      if (errors.length > 0) {
+        errors.forEach((err) => toast.error(err));
+      }
 
-      } else if (isExcel) {
-        const buffer = await file.arrayBuffer();
-        const wb = XLSX.read(buffer, { type: "array", cellDates: true });
-        const sheetName = wb.SheetNames[0];
-        if (!sheetName) throw new Error("The uploaded Excel workbook contains no sheets");
-        const ws = wb.Sheets[sheetName];
-        if (!ws) throw new Error("Cannot read first sheet in Excel file");
-
-        const sheetAoa = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, blankrows: false });
-        if (!sheetAoa.length) throw new Error("The selected Excel sheet is empty");
-
-        headers = (sheetAoa[0] || []).map((h) => String(h ?? "").replace(/^\uFEFF/, "").trim()).filter(Boolean);
-        const rawJson = XLSX.utils.sheet_to_json<Record<string, any>>(ws, {
-          defval: "",
-          raw: false,
-          dateNF: "yyyy-mm-dd",
+      if (successful.length > 0) {
+        setUploadedFiles((prev) => {
+          const next = [...prev, ...successful];
+          recomputeAllRows(next, duplicateHandling);
+          return next;
         });
 
-        parsedData = rawJson
-          .map((row) => {
-            const cleanRow: Record<string, any> = {};
-            for (const [k, v] of Object.entries(row)) {
-              const cleanK = String(k).replace(/^\uFEFF/, "").trim();
-              if (cleanK) {
-                cleanRow[cleanK] = v;
-              }
-            }
-            return cleanRow;
-          })
-          .filter((row) => Object.values(row).some((val) => String(val ?? "").trim().length > 0));
-      } else {
-        throw new Error("Unsupported format. Please upload a CSV (.csv) or Excel (.xlsx, .xls) file.");
+        // Activate the newly uploaded file tab so user can review and adjust its column mappings
+        if (successful[0]) {
+          setActiveFileId(successful[0].id);
+        }
+
+        const totalAddedRows = successful.reduce((sum, f) => sum + f.rawRows.length, 0);
+        const firstSuccess = successful[0];
+        if (successful.length === 1 && firstSuccess) {
+          toast.success(
+            `Loaded ${firstSuccess.rawRows.length} rows with ${firstSuccess.headers.length} columns from ${firstSuccess.name}`
+          );
+        } else {
+          toast.success(
+            `Loaded ${successful.length} bulk data files with ${totalAddedRows} total schemes!`
+          );
+        }
+
+        setStep("mapping");
       }
-
-      if (!parsedData.length) {
-        throw new Error("No data rows found in the uploaded file.");
-      }
-
-      setFileName(file.name);
-      setFileHeaders(headers);
-      setRawRows(parsedData);
-
-      // Auto-detect mappings based on column headers
-      const initialMapping = autoMapHeaders(headers);
-      setColumnMapping(initialMapping);
-
-      // Compute preview rows
-      recomputeRows(parsedData, initialMapping, duplicateHandling);
-
-      // Navigate to mapping adjustment step
-      setStep("mapping");
-      toast.success(`Loaded ${parsedData.length} rows with ${headers.length} columns from ${file.name}`);
     } catch (err: any) {
-      console.error("File parse error:", err);
-      toast.error(err.message || "Failed to parse file. Please check file formatting.");
+      console.error("Bulk upload processing error:", err);
+      toast.error(err.message || "Failed to process bulk data files");
     } finally {
+      setIsParsingFiles(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    handleFile(e.target.files?.[0]);
+    handleFiles(e.target.files);
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    handleFile(e.dataTransfer.files?.[0]);
+    handleFiles(e.dataTransfer.files);
   };
 
-  // Change individual column mapping
+  // Change individual column mapping for active file
   const setMappingForHeader = (header: string, targetKey: TargetFieldKey | "__ignore__") => {
-    const updated = { ...columnMapping, [header]: targetKey };
-    setColumnMapping(updated);
-    recomputeRows(rawRows, updated, duplicateHandling);
+    if (!activeFile) return;
+    const updatedMapping = { ...activeFile.columnMapping, [header]: targetKey };
+    const updatedFiles = uploadedFiles.map((f) =>
+      f.id === activeFile.id ? { ...f, columnMapping: updatedMapping } : f
+    );
+    setUploadedFiles(updatedFiles);
+    recomputeAllRows(updatedFiles, duplicateHandling);
   };
 
-  // Reset to auto-detected mappings
+  // Reset active file to auto-detected mappings
   const handleResetMapping = () => {
-    const auto = autoMapHeaders(fileHeaders);
-    setColumnMapping(auto);
-    recomputeRows(rawRows, auto, duplicateHandling);
-    toast.info("Reset column mappings to auto-detected defaults");
+    if (!activeFile) return;
+    const auto = autoMapHeaders(activeFile.headers);
+    const updatedFiles = uploadedFiles.map((f) =>
+      f.id === activeFile.id ? { ...f, columnMapping: auto } : f
+    );
+    setUploadedFiles(updatedFiles);
+    recomputeAllRows(updatedFiles, duplicateHandling);
+    toast.info(`Reset column mappings to auto-detected defaults for ${activeFile.name}`);
+  };
+
+  // Copy mapping of active file to other files where headers match
+  const handleApplyMappingToAll = () => {
+    if (!activeFile) return;
+    let affectedCount = 0;
+    const updatedFiles = uploadedFiles.map((f) => {
+      if (f.id === activeFile.id) return f;
+      const newMap = { ...f.columnMapping };
+      let updated = false;
+
+      f.headers.forEach((h) => {
+        const normH = normalizeHeader(h);
+        for (const [ah, mapped] of Object.entries(activeFile.columnMapping)) {
+          if (mapped !== "__ignore__" && (ah.toLowerCase() === h.toLowerCase() || normalizeHeader(ah) === normH)) {
+            if (newMap[h] !== mapped) {
+              newMap[h] = mapped;
+              updated = true;
+            }
+          }
+        }
+      });
+
+      if (updated) affectedCount++;
+      return { ...f, columnMapping: newMap };
+    });
+
+    setUploadedFiles(updatedFiles);
+    recomputeAllRows(updatedFiles, duplicateHandling);
+    toast.success(`Applied matching mappings across ${affectedCount} other bulk file(s)`);
+  };
+
+  // Remove an uploaded file
+  const handleRemoveFile = (fileId: string) => {
+    const fileToRemove = uploadedFiles.find((f) => f.id === fileId);
+    const remaining = uploadedFiles.filter((f) => f.id !== fileId);
+    if (remaining.length === 0) {
+      reset();
+      toast.info("All files removed");
+      return;
+    }
+    setUploadedFiles(remaining);
+    const firstRemaining = remaining[0];
+    if (activeFileId === fileId && firstRemaining) {
+      setActiveFileId(firstRemaining.id);
+    }
+    recomputeAllRows(remaining, duplicateHandling);
+    toast.info(`Removed ${fileToRemove?.name || "file"}`);
   };
 
   // Duplicate handling change
@@ -287,12 +313,13 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
     );
   };
 
-  // Sample values preview for each header
+  // Sample values preview for each header in active file
   const sampleValuesMap = useMemo(() => {
+    if (!activeFile) return {};
     const map: Record<string, string[]> = {};
-    for (const h of fileHeaders) {
+    for (const h of activeFile.headers) {
       const samples: string[] = [];
-      for (const row of rawRows) {
+      for (const row of activeFile.rawRows) {
         const val = getRowValue(row, h);
         if (val !== undefined && val !== null && String(val).trim().length > 0) {
           const s = String(val).trim();
@@ -305,13 +332,22 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
       map[h] = samples;
     }
     return map;
-  }, [fileHeaders, rawRows]);
+  }, [activeFile]);
 
-  // Check required mappings
-  const mappedTargets = useMemo(() => new Set(Object.values(columnMapping)), [columnMapping]);
+  // Check required mappings across all uploaded files
+  const filesMissingName = useMemo(() => {
+    return uploadedFiles.filter((f) => {
+      const mapped = new Set(Object.values(f.columnMapping));
+      return !mapped.has("name");
+    });
+  }, [uploadedFiles]);
+
+  const mappedTargets = useMemo(() => {
+    return new Set(Object.values(columnMapping));
+  }, [columnMapping]);
+
   const hasNameMapped = mappedTargets.has("name");
-  const hasUrlMapped = mappedTargets.has("apply_url");
-  const canProceedToPreview = hasNameMapped;
+  const canProceedToPreview = uploadedFiles.length > 0 && filesMissingName.length === 0;
 
   // Inline row edits in preview
   const updateRowField = (id: string, field: "name" | "apply_url", val: string) => {
@@ -320,7 +356,13 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
         if (r.id !== id) return r;
         const newPayload = { ...r.payload, [field]: val };
         const updated = validateRowPayload(newPayload, r.rawRow, r.originalRowIndex, existingSchemes);
-        return { ...updated, id: r.id, skip: r.skip };
+        return {
+          ...updated,
+          id: r.id,
+          skip: r.skip,
+          sourceFileId: r.sourceFileId,
+          sourceFileName: r.sourceFileName,
+        };
       })
     );
   };
@@ -341,11 +383,15 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
 
   // Filtered rows for preview
   const filteredRows = useMemo(() => {
-    if (filterTab === "valid") return rows.filter((r) => r.status === "valid");
-    if (filterTab === "duplicate") return rows.filter((r) => r.status === "duplicate");
-    if (filterTab === "invalid") return rows.filter((r) => r.status === "invalid");
-    return rows;
-  }, [rows, filterTab]);
+    let list = rows;
+    if (fileFilter !== "all") {
+      list = list.filter((r) => r.sourceFileId === fileFilter);
+    }
+    if (filterTab === "valid") return list.filter((r) => r.status === "valid");
+    if (filterTab === "duplicate") return list.filter((r) => r.status === "duplicate");
+    if (filterTab === "invalid") return list.filter((r) => r.status === "invalid");
+    return list;
+  }, [rows, filterTab, fileFilter]);
 
   // Execute database import
   const startImport = async () => {
@@ -358,14 +404,34 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
       failed: 0,
       total: rows.length,
     };
-    const fails: { name: string; error: string }[] = [];
+    const fails: { name: string; error: string; file?: string }[] = [];
+    const fileStatsMap: Record<
+      string,
+      { name: string; success: number; updated: number; skipped: number; failed: number }
+    > = {};
+
+    uploadedFiles.forEach((f) => {
+      fileStatsMap[f.id] = { name: f.name, success: 0, updated: 0, skipped: 0, failed: 0 };
+    });
+
+    // Count skipped for each file
+    rows.forEach((r) => {
+      if (r.skip || r.status === "invalid") {
+        const fid = r.sourceFileId;
+        if (fid && fileStatsMap[fid]) {
+          fileStatsMap[fid].skipped++;
+        }
+      }
+    });
 
     for (let i = 0; i < toProcess.length; i++) {
       const r = toProcess[i]!;
       const payload = r.payload;
       setCurrentImportName(payload.name);
+      setCurrentImportFile(r.sourceFileName || "");
 
       const isUpdate = r.status === "duplicate" && duplicateHandling === "update" && r.existingScheme?.id;
+      const fid = r.sourceFileId;
 
       try {
         if (isUpdate && r.existingScheme) {
@@ -377,6 +443,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
           }
           if (res.error) throw res.error;
           s.updated++;
+          if (fid && fileStatsMap[fid]) fileStatsMap[fid].updated++;
         } else {
           let res = await supabase.from("schemes").insert(payload as any);
           // Fallback if application_video_url column is not in PostgREST cache
@@ -386,11 +453,17 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
           }
           if (res.error) throw res.error;
           s.success++;
+          if (fid && fileStatsMap[fid]) fileStatsMap[fid].success++;
         }
       } catch (err: any) {
         console.error("Import row failed:", err);
         s.failed++;
-        fails.push({ name: payload.name || `Row ${r.originalRowIndex + 1}`, error: err.message || "Database insert error" });
+        if (fid && fileStatsMap[fid]) fileStatsMap[fid].failed++;
+        fails.push({
+          name: payload.name || `Row ${r.originalRowIndex + 1}`,
+          error: err.message || "Database insert error",
+          ...(r.sourceFileName ? { file: r.sourceFileName } : {}),
+        });
       }
 
       setProgress(Math.round(((i + 1) / toProcess.length) * 100));
@@ -398,6 +471,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
 
     qc.invalidateQueries({ queryKey: ["schemes"] });
     setStats(s);
+    setPerFileStats(Object.values(fileStatsMap));
     setFailureDetails(fails);
     setStep("results");
   };
@@ -412,6 +486,19 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
       </DialogTrigger>
 
       <DialogContent className="max-w-5xl max-h-[92vh] flex flex-col p-6 overflow-hidden">
+        {/* Hidden persistent file input accessible across all dialog steps */}
+        <input
+          type="file"
+          ref={fileRef}
+          className="hidden"
+          accept=".csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+          multiple
+          onClick={(e) => {
+            (e.target as HTMLInputElement).value = "";
+          }}
+          onChange={onInputChange}
+        />
+
         <DialogHeader className="pb-3 border-b">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
@@ -451,7 +538,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
           </div>
         </DialogHeader>
 
-        {/* STEP 1: SELECT FILE */}
+        {/* STEP 1: SELECT FILE(S) */}
         {step === "select" && (
           <div className="flex-1 flex flex-col items-center justify-center py-8">
             <div
@@ -464,19 +551,24 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                 <Upload className="h-8 w-8" />
               </div>
               <h3 className="text-lg font-semibold mb-1">Drag and drop your CSV or Excel file here</h3>
-              <p className="text-sm text-muted-foreground max-w-md mb-6">
-                Supports .csv, .xlsx, and .xls files. Column headers will be automatically mapped to scheme database fields.
+              <p className="text-sm text-muted-foreground max-w-md mb-2">
+                Supports uploading <b>multiple bulk data files</b> (.csv, .xlsx, .xls) at once.
               </p>
-              <Button type="button" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
-                Select File from Computer
-              </Button>
-              <input
-                type="file"
-                ref={fileRef}
-                className="hidden"
-                accept=".csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-                onChange={onInputChange}
-              />
+              <p className="text-xs text-muted-foreground max-w-md mb-6">
+                You can select or drag multiple files together. Column headers will be automatically mapped to scheme database fields.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  disabled={isParsingFiles}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    fileRef.current?.click();
+                  }}
+                >
+                  {isParsingFiles ? "Parsing Bulk Data..." : "Select Bulk Files from Computer"}
+                </Button>
+              </div>
             </div>
 
             {/* Template Download & Info Box */}
@@ -503,7 +595,86 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
         {/* STEP 2: REVIEW & ADJUST COLUMN MAPPING */}
         {step === "mapping" && (
           <div className="flex-1 flex flex-col min-h-0 pt-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-2 border-b">
+            {/* Multi-file switcher tabs (if multiple files or option to add more) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2 mb-2 bg-muted/40 rounded-lg border text-xs">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <span className="font-semibold text-muted-foreground flex items-center gap-1.5 shrink-0">
+                  <Files className="h-3.5 w-3.5 text-primary" />
+                  Bulk Files ({uploadedFiles.length}):
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {uploadedFiles.map((f, i) => {
+                    const isActive = f.id === activeFile?.id;
+                    const hasName = new Set(Object.values(f.columnMapping)).has("name");
+                    return (
+                      <div
+                        key={f.id}
+                        onClick={() => setActiveFileId(f.id)}
+                        className={`cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-all ${
+                          isActive
+                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                            : "bg-card text-foreground hover:bg-accent border-muted-foreground/20"
+                        }`}
+                        data-testid={`file-tab-${i}`}
+                      >
+                        <FileSpreadsheet
+                          className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-primary-foreground" : "text-primary"}`}
+                        />
+                        <span className="max-w-[130px] truncate" title={f.name}>
+                          {f.name}
+                        </span>
+                        <span
+                          className={`text-[10px] px-1 rounded ${
+                            isActive ? "bg-white/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {f.rawRows.length}
+                        </span>
+                        {hasName ? (
+                          <Check className={`h-3 w-3 ${isActive ? "text-primary-foreground" : "text-green-600"}`} />
+                        ) : (
+                          <span title="Missing Scheme Name mapping" className="inline-flex items-center">
+                            <AlertCircle
+                              className={`h-3 w-3 ${isActive ? "text-amber-300" : "text-amber-500"}`}
+                            />
+                          </span>
+                        )}
+                        {uploadedFiles.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveFile(f.id);
+                            }}
+                            className={`p-0.5 rounded hover:bg-black/20 ${
+                              isActive ? "text-primary-foreground" : "text-muted-foreground hover:text-destructive"
+                            }`}
+                            title={`Remove ${f.name}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isParsingFiles}
+                  onClick={() => fileRef.current?.click()}
+                  className="h-7 text-xs gap-1 border-dashed"
+                >
+                  <Plus className="h-3 w-3" /> {isParsingFiles ? "Adding..." : "Add More Files"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 mb-2 border-b">
               <div>
                 <h3 className="font-semibold text-base flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-primary" />
@@ -511,9 +682,24 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                 </h3>
                 <p className="text-xs text-muted-foreground">
                   File: <span className="font-medium text-foreground">{fileName}</span> ({rawRows.length} rows, {fileHeaders.length} columns)
+                  {uploadedFiles.length > 1 && (
+                    <span className="ml-2 font-medium text-primary">
+                      · Total: {totalSchemesCount} schemes across {uploadedFiles.length} files
+                    </span>
+                  )}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {uploadedFiles.length > 1 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleApplyMappingToAll}
+                    title="Apply matching column mappings to all other files"
+                  >
+                    <Copy className="h-3.5 w-3.5 mr-1" /> Copy Mapping to All
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={handleResetMapping} title="Auto-detect all columns again">
                   <RotateCcw className="h-3.5 w-3.5 mr-1" /> Auto-Map
                 </Button>
@@ -526,7 +712,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                   onClick={() => setStep("preview")}
                   className="gap-1.5"
                 >
-                  Preview Data ({rawRows.length} schemes)
+                  Preview Data ({totalSchemesCount} schemes)
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -537,7 +723,16 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
               <div className="mb-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 shrink-0" />
                 <span>
-                  <b>Required column missing:</b> Scheme Name must be mapped to proceed.
+                  <b>Required column missing:</b> Scheme Name must be mapped in <b>{fileName}</b> to proceed.
+                </span>
+              </div>
+            )}
+
+            {hasNameMapped && filesMissingName.length > 0 && (
+              <div className="mb-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>
+                  <b>Other file missing mapping:</b> Please select <b>{filesMissingName[0]?.name}</b> and map Scheme Name to proceed.
                 </span>
               </div>
             )}
@@ -562,7 +757,10 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                     return (
                       <tr key={header} className="hover:bg-accent/40 transition-colors">
                         <td className="p-2.5 font-medium">
-                          <span className="inline-block px-2 py-0.5 rounded bg-muted border font-mono text-[11px] max-w-[240px] truncate" title={header}>
+                          <span
+                            className="inline-block px-2 py-0.5 rounded bg-muted border font-mono text-[11px] max-w-[240px] truncate"
+                            title={header}
+                          >
                             {header}
                           </span>
                         </td>
@@ -650,7 +848,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
 
             <div className="flex items-center justify-between pt-3 text-xs text-muted-foreground border-t mt-2">
               <span>
-                Tip: You can change mappings anytime. If an uploaded column isn't mapped, it won't be imported.
+                Tip: You can switch files above to review and adjust each file's column mapping before previewing.
               </span>
               <Button
                 disabled={!canProceedToPreview}
@@ -683,7 +881,9 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                   type="button"
                   onClick={() => setFilterTab("valid")}
                   className={`px-2.5 py-1 rounded-md border transition-colors ${
-                    filterTab === "valid" ? "bg-green-600 text-white font-semibold" : "bg-card text-green-700 dark:text-green-300 hover:bg-muted"
+                    filterTab === "valid"
+                      ? "bg-green-600 text-white font-semibold"
+                      : "bg-card text-green-700 dark:text-green-300 hover:bg-muted"
                   }`}
                 >
                   Valid ({validCount})
@@ -693,7 +893,9 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                     type="button"
                     onClick={() => setFilterTab("duplicate")}
                     className={`px-2.5 py-1 rounded-md border transition-colors ${
-                      filterTab === "duplicate" ? "bg-amber-600 text-white font-semibold" : "bg-card text-amber-700 dark:text-amber-300 hover:bg-muted"
+                      filterTab === "duplicate"
+                        ? "bg-amber-600 text-white font-semibold"
+                        : "bg-card text-amber-700 dark:text-amber-300 hover:bg-muted"
                     }`}
                   >
                     Duplicates ({duplicateCount})
@@ -704,7 +906,9 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                     type="button"
                     onClick={() => setFilterTab("invalid")}
                     className={`px-2.5 py-1 rounded-md border transition-colors ${
-                      filterTab === "invalid" ? "bg-destructive text-destructive-foreground font-semibold" : "bg-card text-destructive hover:bg-muted"
+                      filterTab === "invalid"
+                        ? "bg-destructive text-destructive-foreground font-semibold"
+                        : "bg-card text-destructive hover:bg-muted"
                     }`}
                   >
                     Errors ({invalidCount})
@@ -712,8 +916,27 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                 )}
               </div>
 
-              {/* Duplicate Handling selector & Actions */}
+              {/* Source File Filter & Duplicate Handling selector & Actions */}
               <div className="flex items-center gap-2 flex-wrap">
+                {uploadedFiles.length > 1 && (
+                  <div className="flex items-center gap-1.5 text-xs bg-muted/50 p-1 rounded-md border">
+                    <span className="text-muted-foreground font-medium pl-1">File:</span>
+                    <Select value={fileFilter} onValueChange={setFileFilter}>
+                      <SelectTrigger className="h-7 text-xs w-[180px] bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Files ({rows.length})</SelectItem>
+                        {uploadedFiles.map((f) => (
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.name} ({f.rawRows.length})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-1.5 text-xs bg-muted/50 p-1 rounded-md border">
                   <span className="text-muted-foreground font-medium pl-1">Duplicates:</span>
                   <Select
@@ -730,6 +953,16 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isParsingFiles}
+                  onClick={() => fileRef.current?.click()}
+                  className="h-8 text-xs gap-1"
+                >
+                  <Plus className="h-3 w-3" /> {isParsingFiles ? "Adding..." : "Add File"}
+                </Button>
 
                 <Button variant="outline" size="sm" onClick={() => setStep("mapping")}>
                   <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Adjust Mapping
@@ -760,6 +993,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                       />
                     </th>
                     <th className="p-2 w-24">Status</th>
+                    {uploadedFiles.length > 1 && <th className="p-2 min-w-[140px]">Source File</th>}
                     <th className="p-2 min-w-[220px]">Scheme Name</th>
                     <th className="p-2 min-w-[130px]">Category & Level</th>
                     <th className="p-2 min-w-[160px]">Department</th>
@@ -802,7 +1036,10 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                           ) : r.status === "duplicate" ? (
                             <span
                               className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20"
-                              title={`Matches existing scheme: "${r.existingScheme?.name}"`}
+                              title={
+                                r.warnings.find((w) => w.includes("Duplicate")) ||
+                                `Matches existing scheme: "${r.existingScheme?.name}"`
+                              }
                             >
                               Duplicate
                             </span>
@@ -812,6 +1049,19 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                             </span>
                           )}
                         </td>
+
+                        {/* Source File Badge (if multi-file) */}
+                        {uploadedFiles.length > 1 && (
+                          <td className="p-2 whitespace-nowrap">
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-muted border font-mono text-muted-foreground max-w-[130px] truncate"
+                              title={r.sourceFileName}
+                            >
+                              <FileSpreadsheet className="h-3 w-3 text-primary shrink-0" />
+                              <span className="truncate">{r.sourceFileName}</span>
+                            </span>
+                          </td>
+                        )}
 
                         {/* Name (editable if error) */}
                         <td className="p-2">
@@ -940,15 +1190,19 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
                               {r.payload.video_type === "youtube" ? "YouTube" : "Video"}
                             </span>
                           ) : (
-                            <span className="text-muted-foreground/60 text-[11px]" title="No tutorial video provided">No Video</span>
+                            <span className="text-muted-foreground/60 text-[11px]" title="No tutorial video provided">
+                              No Video
+                            </span>
                           )}
                         </td>
 
                         {/* Errors & Warnings */}
                         <td className="p-2">
                           {r.errors.length > 0 ? (
-                            <span className="text-destructive font-medium text-[11px]">
-                              {r.errors.join(", ")}
+                            <span className="text-destructive font-medium text-[11px]">{r.errors.join(", ")}</span>
+                          ) : r.warnings.length > 0 ? (
+                            <span className="text-amber-600 dark:text-amber-400 text-[11px]">
+                              {r.warnings.join(", ")}
                             </span>
                           ) : r.status === "duplicate" ? (
                             <span className="text-amber-600 dark:text-amber-400 text-[11px]">
@@ -971,6 +1225,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
             <div className="flex items-center justify-between pt-3 border-t mt-2 text-xs">
               <span className="text-muted-foreground">
                 Showing {filteredRows.length} of {rows.length} schemes
+                {uploadedFiles.length > 1 && ` (across ${uploadedFiles.length} files)`}
               </span>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={() => setStep("mapping")}>
@@ -995,7 +1250,14 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
             <div className="h-12 w-12 rounded-full border-4 border-primary border-t-transparent animate-spin mb-6" />
             <h3 className="text-lg font-bold mb-1">Importing Schemes to Database...</h3>
             <p className="text-sm text-muted-foreground mb-6 max-w-md truncate">
-              {currentImportName ? `Processing "${currentImportName}"` : "Saving scheme records..."}
+              {currentImportName ? (
+                <span>
+                  Processing "{currentImportName}"
+                  {currentImportFile && <span className="text-xs text-primary ml-1">({currentImportFile})</span>}
+                </span>
+              ) : (
+                "Saving scheme records..."
+              )}
             </p>
             <div className="w-full max-w-md space-y-2">
               <Progress value={progress} className="h-2.5" />
@@ -1009,7 +1271,7 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
 
         {/* STEP 5: RESULTS */}
         {step === "results" && (
-          <div className="flex-1 flex flex-col items-center justify-center py-8 text-center">
+          <div className="flex-1 flex flex-col items-center justify-center py-8 text-center overflow-y-auto">
             <div className="h-16 w-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-600 mb-4">
               <CheckCircle2 className="h-10 w-10" />
             </div>
@@ -1037,23 +1299,58 @@ export function BulkUpload({ existingSchemes }: { existingSchemes: Scheme[] }) {
               </div>
             </div>
 
+            {/* Per-file breakdown if multiple files were uploaded */}
+            {perFileStats.length > 1 && (
+              <div className="w-full max-w-xl mb-6 text-left border rounded-lg overflow-hidden bg-card text-xs">
+                <div className="p-2.5 bg-muted font-semibold text-foreground border-b flex items-center gap-2">
+                  <Files className="h-4 w-4 text-primary" />
+                  <span>Breakdown by Uploaded Bulk File</span>
+                </div>
+                <div className="divide-y">
+                  {perFileStats.map((fs, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2.5 hover:bg-muted/40 transition-colors">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileSpreadsheet className="h-3.5 w-3.5 text-primary shrink-0" />
+                        <span className="font-medium truncate max-w-[220px]" title={fs.name}>
+                          {fs.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-green-600 font-semibold">{fs.success} added</span>
+                        {fs.updated > 0 && <span className="text-primary font-semibold">{fs.updated} updated</span>}
+                        {fs.skipped > 0 && <span className="text-amber-600">{fs.skipped} skipped</span>}
+                        {fs.failed > 0 && <span className="text-destructive font-semibold">{fs.failed} failed</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* List failures if any */}
             {failureDetails.length > 0 && (
               <div className="w-full max-w-xl mb-6 text-left p-3 rounded-lg border border-red-500/30 bg-red-500/5 text-xs">
-                <p className="font-semibold text-destructive mb-1">Failed to import {failureDetails.length} schemes:</p>
+                <p className="font-semibold text-destructive mb-1">
+                  Failed to import {failureDetails.length} schemes:
+                </p>
                 <ul className="list-disc pl-4 space-y-1 text-muted-foreground max-h-32 overflow-auto">
                   {failureDetails.map((f, i) => (
                     <li key={i}>
-                      <b>{f.name}:</b> {f.error}
+                      <b>{f.name}</b> {f.file ? `(${f.file})` : ""}: {f.error}
                     </li>
                   ))}
                 </ul>
               </div>
             )}
 
-            <Button onClick={() => setOpen(false)} className="px-8 font-semibold">
-              Done
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" onClick={reset}>
+                Upload More Bulk Data
+              </Button>
+              <Button onClick={() => setOpen(false)} className="px-8 font-semibold">
+                Done
+              </Button>
+            </div>
           </div>
         )}
       </DialogContent>

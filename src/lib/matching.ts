@@ -4,6 +4,30 @@ import { splitRequiredDocuments } from "@/lib/document-helpers";
 
 export type Scheme = Tables<"schemes">;
 export type Profile = Tables<"profiles">;
+export type ManagedUser = Tables<"managed_users">;
+
+export type BeneficiaryData = {
+  id?: string;
+  full_name?: string | null;
+  dob?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  category?: string | null;
+  annual_income?: number | string | null;
+  occupation?: string | null;
+  education?: string | null;
+  state?: string | null;
+  district?: string | null;
+  area?: string | null;
+  is_farmer?: boolean | null;
+  is_student?: boolean | null;
+  has_disability?: boolean | null;
+  disability_percentage?: number | null;
+  marital_status?: string | null;
+  family_size?: number | null;
+  mobile?: string | null;
+  email?: string | null;
+};
 
 export type Eligibility = {
   min_age?: number; max_age?: number; genders?: string[]; categories?: string[];
@@ -13,41 +37,159 @@ export type Eligibility = {
   application_video_url?: string; video_type?: string;
 };
 
+export type MatchStatus = "eligible" | "ineligible" | "needs_verification";
+
 export type MatchResult = {
-  scheme: Scheme; percent: number; eligible: boolean;
-  reasons: string[]; missing: string[]; missingDocs: string[];
+  scheme: Scheme;
+  percent: number;
+  eligible: boolean;
+  status: MatchStatus;
+  reasons: string[];
+  missing: string[];
+  failedReasons: string[];
+  missingDocs: string[];
 };
 
 export function age(dob?: string | null) {
   if (!dob) return null;
-  const d = new Date(dob); const n = new Date();
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const n = new Date();
   let a = n.getFullYear() - d.getFullYear();
   if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) a--;
-  return a;
+  return a >= 0 ? a : null;
 }
 
-export function matchScheme(scheme: Scheme, p: Profile | null, docTypes: string[]): MatchResult {
-  const e = (scheme.eligibility ?? {}) as Eligibility;
-  const reasons: string[] = []; const missing: string[] = []; let failed = false;
-  let total = 0; let met = 0;
-  const check = (applies: boolean, value: unknown, ok: () => boolean, okMsg: string, failMsg: string, unknownMsg: string) => {
+export function matchScheme(
+  scheme: Scheme,
+  p: BeneficiaryData | Profile | ManagedUser | null,
+  docTypes: string[] = []
+): MatchResult {
+  const e = ((scheme as any).eligibility ?? (scheme as any).eligibility_criteria ?? {}) as Eligibility;
+  const reasons: string[] = [];
+  const missing: string[] = [];
+  const failedReasons: string[] = [];
+  let failed = false;
+  let total = 0;
+  let met = 0;
+
+  const check = (
+    applies: boolean,
+    value: unknown,
+    ok: () => boolean,
+    okMsg: string,
+    failMsg: string,
+    unknownMsg: string
+  ) => {
     if (!applies) return;
     total++;
-    if (value === null || value === undefined || value === "") { missing.push(unknownMsg); return; }
-    if (ok()) { met++; reasons.push(okMsg); } else { failed = true; missing.push(failMsg); }
+    if (value === null || value === undefined || value === "") {
+      missing.push(unknownMsg);
+      return;
+    }
+    if (ok()) {
+      met++;
+      reasons.push(okMsg);
+    } else {
+      failed = true;
+      failedReasons.push(failMsg);
+    }
   };
-  const a = age(p?.dob);
-  check(e.min_age != null || e.max_age != null, a, () => (e.min_age == null || a! >= e.min_age) && (e.max_age == null || a! <= e.max_age),
-    `Your age (${a}) fits the ${e.min_age ?? 0}–${e.max_age ?? "∞"} range`, `Age must be ${e.min_age ?? 0}–${e.max_age ?? "any"}`, "Add your date of birth");
-  check(!!e.genders?.length, p?.gender, () => e.genders!.includes(p!.gender!), `Open to ${e.genders?.join("/")} applicants`, `Only for ${e.genders?.join("/")} applicants`, "Add your gender");
-  check(!!e.categories?.length, p?.category, () => e.categories!.includes(p!.category!), `Your category (${p?.category}) is covered`, `Only for ${e.categories?.join("/")} categories`, "Add your social category");
-  check(e.max_income != null, p?.annual_income, () => Number(p!.annual_income) <= e.max_income!, `Income within ₹${e.max_income?.toLocaleString("en-IN")} limit`, `Income must be ≤ ₹${e.max_income?.toLocaleString("en-IN")}`, "Add your annual income");
-  check(!!e.occupations?.length, p?.occupation, () => e.occupations!.includes(p!.occupation!), `Your occupation (${p?.occupation}) qualifies`, `For ${e.occupations?.join("/")} only`, "Add your occupation");
-  check(!!e.states?.length, p?.state, () => e.states!.includes(p!.state!), `Available in ${p?.state}`, `Only available in ${e.states?.join(", ")}`, "Add your state");
-  check(!!e.area, p?.area, () => p!.area === e.area, `You live in a ${e.area?.toLowerCase()} area`, `Only for ${e.area?.toLowerCase()} residents`, "Add rural/urban status");
-  check(e.farmer === true, p?.is_farmer, () => !!p!.is_farmer, "You are a farmer", "Only for farmers", "Add farmer status");
-  check(e.student === true, p?.is_student, () => !!p!.is_student, "You are a student", "Only for students", "Add student status");
-  check(e.disability === true, p?.has_disability, () => !!p!.has_disability, "You have a recorded disability", "Only for persons with disability", "Add disability status");
+
+  // Support both calculated age from dob or directly provided age
+  const calculatedAge = (p as any)?.age != null && (p as any)?.age !== ""
+    ? Number((p as any).age)
+    : age(p?.dob);
+
+  check(
+    e.min_age != null || e.max_age != null,
+    calculatedAge,
+    () => (e.min_age == null || calculatedAge! >= e.min_age) && (e.max_age == null || calculatedAge! <= e.max_age),
+    `Age (${calculatedAge}) fits the ${e.min_age ?? 0}–${e.max_age ?? "∞"} range`,
+    `Age must be ${e.min_age ?? 0}–${e.max_age ?? "any"} (applicant is ${calculatedAge ?? "unknown"})`,
+    "Date of birth / age is required"
+  );
+
+  check(
+    !!e.genders?.length,
+    p?.gender,
+    () => e.genders!.some((g) => g.toLowerCase() === (p!.gender || "").toLowerCase()),
+    `Open to ${e.genders?.join("/")} applicants`,
+    `Only for ${e.genders?.join("/")} applicants`,
+    "Gender is required"
+  );
+
+  check(
+    !!e.categories?.length,
+    p?.category,
+    () => e.categories!.some((c) => c.toLowerCase() === (p!.category || "").toLowerCase()),
+    `Category (${p?.category}) is covered`,
+    `Only for ${e.categories?.join("/")} categories`,
+    "Social category is required"
+  );
+
+  check(
+    e.max_income != null,
+    p?.annual_income,
+    () => Number(p!.annual_income) <= e.max_income!,
+    `Income within ₹${e.max_income?.toLocaleString("en-IN")} limit`,
+    `Income must be ≤ ₹${e.max_income?.toLocaleString("en-IN")}`,
+    "Annual income is required"
+  );
+
+  check(
+    !!e.occupations?.length,
+    p?.occupation,
+    () => e.occupations!.some((o) => o.toLowerCase() === (p!.occupation || "").toLowerCase()),
+    `Occupation (${p?.occupation}) qualifies`,
+    `For ${e.occupations?.join("/")} only`,
+    "Occupation is required"
+  );
+
+  check(
+    !!e.states?.length,
+    p?.state,
+    () => e.states!.some((s) => s.toLowerCase() === (p!.state || "").toLowerCase()),
+    `Available in ${p?.state}`,
+    `Only available in ${e.states?.join(", ")}`,
+    "State is required"
+  );
+
+  check(
+    !!e.area,
+    p?.area,
+    () => (p!.area || "").toLowerCase() === (e.area || "").toLowerCase(),
+    `Located in ${e.area} area`,
+    `Only for ${e.area} residents`,
+    "Rural/Urban area is required"
+  );
+
+  check(
+    e.farmer === true || (e as any).is_farmer === true,
+    p?.is_farmer,
+    () => !!p!.is_farmer,
+    "Applicant is a farmer",
+    "Only for farmers",
+    "Farmer status is required"
+  );
+
+  check(
+    e.student === true || (e as any).is_student === true,
+    p?.is_student,
+    () => !!p!.is_student,
+    "Applicant is a student",
+    "Only for students",
+    "Student status is required"
+  );
+
+  check(
+    e.disability === true || (e as any).has_disability === true,
+    p?.has_disability,
+    () => !!p!.has_disability,
+    "Applicant has recorded disability",
+    "Only for persons with disability",
+    "Disability status is required"
+  );
 
   const formattedDocs = splitRequiredDocuments(scheme.required_documents);
   const lowerDocTypes = new Set(docTypes.map((d) => d.trim().toLowerCase()));
@@ -71,17 +213,62 @@ export function matchScheme(scheme: Scheme, p: Profile | null, docTypes: string[
     if (dLower === "other documents" && hasCustomDoc) return false;
     return true;
   });
+
   const docTotal = formattedDocs.length;
   const docMet = docTotal - missingDocs.length;
   if (docMet > 0) reasons.push(`${docMet} of ${docTotal} required documents uploaded`);
   if (total === 0) reasons.push("Open to all citizens");
-  const percent = Math.round(((met + docMet + (total === 0 ? 1 : 0)) / Math.max(1, total + docTotal + (total === 0 ? 1 : 0))) * 100);
-  return { scheme, percent, eligible: !failed, reasons, missing, missingDocs };
+
+  // Determine strict status:
+  // - Ineligible: Any mandatory condition is explicitly failed
+  // - Needs Verification: Condition information is missing / unverified
+  // - Eligible: All condition requirements are satisfied without missing information
+  let status: MatchStatus = "eligible";
+  let isEligible = false;
+
+  if (failed) {
+    status = "ineligible";
+    isEligible = false;
+  } else if (missing.length > 0) {
+    status = "needs_verification";
+    isEligible = false; // NEVER mark as eligible when mandatory info is missing!
+  } else {
+    status = "eligible";
+    isEligible = true;
+  }
+
+  const percent = Math.round(
+    ((met + docMet + (total === 0 ? 1 : 0)) / Math.max(1, total + docTotal + (total === 0 ? 1 : 0))) * 100
+  );
+
+  return {
+    scheme,
+    percent,
+    eligible: isEligible,
+    status,
+    reasons,
+    missing,
+    failedReasons,
+    missingDocs,
+  };
 }
 
-const PROFILE_FIELDS: (keyof Profile)[] = ["full_name","mobile","state","district","dob","gender","category","annual_income","occupation","family_size","area"];
-export function profileCompletion(p: Profile | null) {
+const PROFILE_FIELDS: (keyof BeneficiaryData)[] = [
+  "full_name",
+  "mobile",
+  "state",
+  "district",
+  "dob",
+  "gender",
+  "category",
+  "annual_income",
+  "occupation",
+  "family_size",
+  "area",
+];
+
+export function profileCompletion(p: BeneficiaryData | Profile | null) {
   if (!p) return 0;
-  const filled = PROFILE_FIELDS.filter((k) => p[k] !== null && p[k] !== undefined && p[k] !== "").length;
+  const filled = PROFILE_FIELDS.filter((k) => (p as any)[k] !== null && (p as any)[k] !== undefined && (p as any)[k] !== "").length;
   return Math.round((filled / PROFILE_FIELDS.length) * 100);
 }

@@ -78,9 +78,11 @@ const mockSchemes = [
   },
 ];
 
+let currentMockSchemes: any[] = mockSchemes;
+
 vi.mock("@/hooks/use-app-data", () => ({
   useIsAdmin: () => ({ data: true, isLoading: false }),
-  useSchemes: () => ({ data: mockSchemes, isLoading: false }),
+  useSchemes: () => ({ data: currentMockSchemes, isLoading: false }),
 }));
 
 vi.mock("sonner", () => ({
@@ -102,6 +104,7 @@ function renderAdmin() {
 describe("Admin Bulk Delete Schemes Functionality", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentMockSchemes = mockSchemes;
     inMock.mockReset();
     inMock.mockResolvedValue({ error: null });
     deleteMock.mockReturnValue({ in: inMock });
@@ -282,4 +285,49 @@ describe("Admin Bulk Delete Schemes Functionality", () => {
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(screen.getByTestId("bulk-delete-button")).toHaveTextContent("Delete Selected (1)");
   });
+
+  it("batches large deletions into safe chunks of 50 to prevent URI/header overflow", async () => {
+    const { toast } = await import("sonner");
+    // Generate 60 schemes to test multi-chunk batching (>50)
+    currentMockSchemes = Array.from({ length: 60 }, (_, i) => ({
+      id: `bulk-scheme-${i + 1}`,
+      name: `Bulk Scheme ${i + 1}`,
+      description: `Description ${i + 1}`,
+      ministry: "Ministry of Test",
+      category: "General",
+      level: "Central",
+      state: null,
+      benefits: "Benefits",
+      eligibility_text: "Eligibility",
+      required_documents: ["Aadhaar"],
+      apply_url: "https://example.com",
+      application_video_url: null,
+      video_type: null,
+      eligibility: {},
+    }));
+
+    renderAdmin();
+
+    const selectAllCheckbox = screen.getByTestId("select-all-checkbox");
+    fireEvent.click(selectAllCheckbox);
+
+    expect(screen.getByText("60 selected")).toBeInTheDocument();
+    const deleteBtn = screen.getByTestId("bulk-delete-button");
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-bulk-delete-button")).toBeInTheDocument();
+    });
+
+    const confirmBtn = screen.getByTestId("confirm-bulk-delete-button");
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      // 60 schemes in batches of 50 should produce 2 chunk calls: 50, 10
+      expect(inMock).toHaveBeenCalledTimes(2);
+      expect((inMock.mock.calls[0] as any)?.[1]).toHaveLength(50);
+      expect((inMock.mock.calls[1] as any)?.[1]).toHaveLength(10);
+      expect(toast.success).toHaveBeenCalledWith("Successfully deleted 60 schemes");
+    });
+  }, 15000);
 });

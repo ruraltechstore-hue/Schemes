@@ -35,9 +35,9 @@ export function isPointWise(value: unknown): boolean {
   }
 
   // Contains multiple sentence-like criteria separated by full stop
-  if (/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i.test(str)) {
+  if (/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof|rs|no|approx|ltd|pvt)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i.test(str)) {
     const parts = str
-      .split(/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i)
+      .split(/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof|rs|no|approx|ltd|pvt)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i)
       .map((p) => p.trim())
       .filter(Boolean);
     if (parts.length > 1) return true;
@@ -122,10 +122,10 @@ export function splitIntoPoints(value: unknown): string[] {
     } else {
       rawSegments = [normalized];
     }
-  } else if (/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i.test(normalized)) {
+  } else if (/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof|rs|no|approx|ltd|pvt)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i.test(normalized)) {
     // 6. Period-separated criteria e.g. "Criteria 1. Criteria 2. Criteria 3."
     const parts = normalized
-      .split(/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i)
+      .split(/(?<!\b(?:e\.g|i\.e|dr|mr|mrs|ms|st|prof|rs|no|approx|ltd|pvt)\b)(?<=[^\d\s])\.\s+(?=[A-Za-z0-9₹"'])/i)
       .map((p) => p.trim())
       .filter(Boolean);
     if (parts.length > 1) {

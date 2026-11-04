@@ -76,3 +76,6 @@ export function useMatches() {
   const eligible = all.filter((m) => m.eligible).sort((a, b) => b.percent - a.percent);
   return { all, eligible, isLoading: profile.isLoading || docs.isLoading || schemes.isLoading };
 }
+
+export * from "./use-agent-data";
+

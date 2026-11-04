@@ -16,6 +16,11 @@ const steps = [
 function Index() {
   return (
     <div className="min-h-screen bg-background">
+      <title>Government Scheme Finder — Find Schemes You May Be Eligible For</title>
+      <meta
+        name="description"
+        content="Create a profile, upload documents and discover central and state government schemes you may be eligible for."
+      />
       <div className="tricolor-bar h-1" />
       <header className="border-b bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">

@@ -84,9 +84,9 @@ export async function verifyOtpRequest(email: string, otp: string): Promise<Veri
       body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
     });
 
-    // In static deployment, /api/verify-otp returns 404 or 405.
-    // Pass through so Supabase verifyOtp handles verification directly!
-    if (res.status === 404 || res.status === 405 || !res.ok) {
+    // In static deployment without Node backend, /api/verify-otp returns 404 or 405.
+    // In that specific case only, return fallback so client-side Supabase verification handles it.
+    if (res.status === 404 || res.status === 405) {
       return {
         success: true,
         message: "Verifying code...",
@@ -95,7 +95,7 @@ export async function verifyOtpRequest(email: string, otp: string): Promise<Veri
 
     const data = await res.json().catch(() => null);
 
-    if (!data?.success) {
+    if (!res.ok || !data?.success) {
       return {
         success: false,
         message: data?.message || data?.error || "Invalid verification code",
@@ -112,8 +112,35 @@ export async function verifyOtpRequest(email: string, otp: string): Promise<Veri
     };
   } catch (err: any) {
     return {
-      success: true,
-      message: "Verifying code...",
+      success: false,
+      message: err?.message || "Network error during OTP verification",
+      error: "Network error",
     };
+  }
+}
+
+/**
+ * Notify Administrator of newly verified agent awaiting approval
+ */
+export async function notifyAdminApprovalRequest(agentDetails: {
+  id?: string;
+  fullName: string;
+  email: string;
+  mobile: string;
+  agencyName?: string;
+  address?: string;
+  state?: string;
+  district?: string;
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    const res = await fetch("/api/notify-admin-registration", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(agentDetails),
+    });
+    const data = await res.json().catch(() => null);
+    return { success: res.ok, message: data?.message };
+  } catch {
+    return { success: true };
   }
 }

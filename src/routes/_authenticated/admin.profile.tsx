@@ -7,7 +7,6 @@ import {
   ShieldAlert,
   Camera,
   Trash2,
-  Lock,
   User,
   Mail,
   Calendar,
@@ -20,15 +19,22 @@ import {
   CheckCircle2,
   AlertTriangle,
   KeyRound,
-  FileCheck2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
 import { useIsAdmin, useProfile, useUser } from "@/hooks/use-app-data";
@@ -39,6 +45,8 @@ import {
   uploadAdminAvatar,
   validateAvatarFile,
 } from "@/lib/profile-helpers";
+
+type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
 
 export default AdminProfile;
 
@@ -65,9 +73,11 @@ function AdminProfile() {
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
   // Current saved values
-  const currentFullName = profile?.full_name || user?.user_metadata?.full_name || "";
-  const currentAvatarUrl = user?.user_metadata?.avatar_url || (profile as any)?.avatar_url || null;
-  const currentAvatarPath = user?.user_metadata?.avatar_path || null;
+  const currentFullName =
+    profile?.full_name || (user?.user_metadata?.["full_name"] as string | undefined) || "";
+  const currentAvatarUrl =
+    (user?.user_metadata?.["avatar_url"] as string | undefined) || profile?.avatar_url || null;
+  const currentAvatarPath = (user?.user_metadata?.["avatar_path"] as string | undefined) || null;
   const adminEmail = user?.email || profile?.email || "N/A";
   const initials = getInitials(fullName || currentFullName, adminEmail);
   const createdAtFormatted = formatAccountDate(user?.created_at || profile?.created_at);
@@ -182,7 +192,7 @@ function AdminProfile() {
       if (authError) throw authError;
 
       // 4. Update profiles table
-      const profileUpdate: Record<string, any> = {
+      const profileUpdate: ProfileUpdate = {
         full_name: trimmedName,
         updated_at: new Date().toISOString(),
       };
@@ -197,10 +207,13 @@ function AdminProfile() {
 
       // If profiles update failed due to missing avatar_url column, retry without it
       if (profileError && profileError.message?.includes("avatar_url")) {
-        delete profileUpdate.avatar_url;
+        const fallbackUpdate: ProfileUpdate = {
+          full_name: trimmedName,
+          updated_at: new Date().toISOString(),
+        };
         const { error: retryError } = await supabase
           .from("profiles")
-          .update(profileUpdate)
+          .update(fallbackUpdate)
           .eq("id", user.id);
         if (retryError) throw retryError;
       } else if (profileError) {
@@ -220,9 +233,10 @@ function AdminProfile() {
       if (fileInputRef.current) fileInputRef.current.value = "";
 
       toast.success("Admin profile updated successfully");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to update admin profile";
       console.error("Save profile error:", err);
-      toast.error(err.message || "Failed to update admin profile");
+      toast.error(message);
     } finally {
       setIsSavingProfile(false);
     }
@@ -259,9 +273,10 @@ function AdminProfile() {
       toast.success("Password changed successfully");
       setNewPassword("");
       setConfirmPassword("");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to change password";
       console.error("Update password error:", err);
-      toast.error(err.message || "Failed to change password");
+      toast.error(message);
     } finally {
       setIsUpdatingPassword(false);
     }
@@ -286,8 +301,8 @@ function AdminProfile() {
         </div>
         <h2 className="text-2xl font-bold tracking-tight">Access Restricted</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          You do not have administrative privileges to access this profile. This page is
-          strictly reserved for authenticated administrators.
+          You do not have administrative privileges to access this profile. This page is strictly
+          reserved for authenticated administrators.
         </p>
         <div className="mt-6 flex justify-center gap-3">
           <Button asChild variant="default">
@@ -299,14 +314,10 @@ function AdminProfile() {
   }
 
   // Active avatar display source
-  const effectiveAvatar = isPhotoRemoved
-    ? null
-    : previewUrl || currentAvatarUrl;
+  const effectiveAvatar = isPhotoRemoved ? null : previewUrl || currentAvatarUrl;
 
   const hasUnsavedProfileChanges =
-    fullName.trim() !== currentFullName.trim() ||
-    selectedFile !== null ||
-    isPhotoRemoved;
+    fullName.trim() !== currentFullName.trim() || selectedFile !== null || isPhotoRemoved;
 
   return (
     <div className="space-y-6" data-testid="admin-profile-page">
@@ -369,12 +380,6 @@ function AdminProfile() {
                   </span>
                 </div>
               </div>
-            </div>
-
-            <div className="flex items-center justify-center gap-2">
-              <Badge variant="outline" className="border-primary/20 bg-primary/5 px-3 py-1 text-xs text-primary">
-                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Authenticated via Supabase
-              </Badge>
             </div>
           </div>
         </div>

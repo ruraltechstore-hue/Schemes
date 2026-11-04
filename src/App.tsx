@@ -16,6 +16,11 @@ import AllSchemes from "./routes/_authenticated/schemes.index";
 import SchemeDetail from "./routes/_authenticated/schemes.$id";
 import Applications from "./routes/_authenticated/applications";
 import Settings from "./routes/_authenticated/settings";
+import UsersIndex from "./routes/_authenticated/users.index";
+import UsersNew from "./routes/_authenticated/users.new";
+import UserDetails from "./routes/_authenticated/users.$id";
+import UserSchemeDetail from "./routes/_authenticated/users.$id.schemes.$schemeId";
+import Reports from "./routes/_authenticated/reports";
 
 export default function App() {
   return (
@@ -38,6 +43,13 @@ export default function App() {
           <Route path="/schemes/:id" element={<SchemeDetail />} />
           <Route path="/applications" element={<Applications />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/users" element={<UsersIndex />} />
+          <Route path="/users/new" element={<UsersNew />} />
+          <Route path="/users/:userId" element={<UserDetails />} />
+          <Route path="/agent/users/:userId" element={<UserDetails />} />
+          <Route path="/users/:userId/schemes/:schemeId" element={<UserSchemeDetail />} />
+          <Route path="/agent/users/:userId/schemes/:schemeId" element={<UserSchemeDetail />} />
+          <Route path="/reports" element={<Reports />} />
         </Route>
       </Route>
     </Routes>

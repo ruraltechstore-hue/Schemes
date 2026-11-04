@@ -49,7 +49,6 @@ function Login() {
       }
 
       if (data?.user) {
-        toast.success("Welcome back!");
         const { data: roleData } = await supabase
           .from("user_roles")
           .select("role")
@@ -58,11 +57,46 @@ function Login() {
           .maybeSingle();
 
         if (roleData?.role === "admin") {
+          toast.success("Welcome back, Administrator!");
           nav("/admin");
           return;
         }
+
+        const { data: agentData } = await supabase
+          .from("agent_profiles")
+          .select("*")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        if (agentData) {
+          if (agentData.status === "unverified" || agentData.email_verified === false) {
+            toast.error("Please complete email verification to activate your agent account.");
+            nav("/register");
+            return;
+          }
+          if (agentData.status === "pending") {
+            toast.info("Your agent registration has been submitted. Please wait for admin approval.");
+            nav("/dashboard");
+            return;
+          }
+          if (agentData.status === "rejected") {
+            toast.error("Your agent application has been rejected. Please contact support.");
+            nav("/dashboard");
+            return;
+          }
+          if (agentData.status === "suspended") {
+            toast.error("Your agent account has been suspended. Please contact administrator.");
+            nav("/dashboard");
+            return;
+          }
+          toast.success(`Welcome back, Agent ${agentData.full_name || ""}!`);
+          nav("/dashboard");
+          return;
+        }
+
+        toast.success("Welcome back!");
+        nav("/dashboard");
       }
-      nav("/dashboard");
     } catch (err: any) {
       setBusy(false);
       toast.error(err?.message || "An unexpected error occurred. Please try again.");
@@ -70,7 +104,7 @@ function Login() {
   };
 
   return (
-    <AuthLayout title="Login" subtitle="Access your scheme dashboard">
+    <AuthLayout title="Agent Login" subtitle="Access your scheme dashboard & beneficiary portal">
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label htmlFor="login-email">Email</Label>
@@ -104,9 +138,9 @@ function Login() {
         </Button>
       </form>
       <p className="mt-6 text-center text-sm text-muted-foreground">
-        New here?{" "}
-        <Link to="/register" className="text-primary underline">
-          Create an account
+        New agent?{" "}
+        <Link to="/register" className="text-primary underline font-medium">
+          Register as an Agent
         </Link>
       </p>
     </AuthLayout>

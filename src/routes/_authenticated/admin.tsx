@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, ShieldAlert, Video, Loader2, RotateCcw, AlertCircle, X, Search, User } from "lucide-react";
+import { Pencil, Plus, Trash2, ShieldAlert, Video, Loader2, RotateCcw, AlertCircle, X, Search, User, Users, Library } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { BulkUpload } from "@/components/BulkUpload";
 import { AdminVideoUploader } from "@/components/AdminVideoUploader";
+import { AdminAgentManagement } from "@/components/AdminAgentManagement";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +27,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
 import { useIsAdmin, useSchemes } from "@/hooks/use-app-data";
+import { useAllAgentProfiles } from "@/hooks/use-agent-data";
 import type { Eligibility, Scheme } from "@/lib/matching";
 import { getSchemeVideo, isYouTubeUrl } from "@/lib/video-helpers";
 import { CASTE_CATEGORIES, DOC_TYPES, GENDERS, OCCUPATIONS, SCHEME_CATEGORIES, STATES } from "@/lib/constants";
@@ -109,6 +111,16 @@ function Admin() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [selectedLevel, setSelectedLevel] = useState<string>("All");
+
+  // Tab navigation state for Schemes vs Agents (defaults to schemes, reads ?tab=agents if available)
+  const [currentTab, setCurrentTab] = useState<"schemes" | "agents">(() => {
+    if (typeof window !== "undefined" && window.location?.search?.includes("tab=agents")) {
+      return "agents";
+    }
+    return "schemes";
+  });
+  const { data: allAgents = [] } = useAllAgentProfiles();
+  const pendingAgentCount = allAgents.filter((a) => a.status === "pending").length;
 
   if (isLoading) return null;
   if (!isAdmin) {
@@ -340,22 +352,64 @@ function Admin() {
 
     setIsBulkDeleting(true);
     const idsToDelete = Array.from(selectedIds);
+    const BATCH_SIZE = 50;
+
+    const deletedIds: string[] = [];
+    const failedIds: string[] = [];
+    let lastError: any = null;
 
     try {
-      const { error } = await supabase
-        .from("schemes")
-        .delete()
-        .in("id", idsToDelete);
+      for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
+        const chunk = idsToDelete.slice(i, i + BATCH_SIZE);
+        try {
+          // Clean up dependent child records safely if any to prevent foreign key restriction
+          try {
+            await supabase.from("user_scheme_matches")?.delete?.().in("scheme_id", chunk);
+          } catch {}
+          try {
+            await (supabase.from("documents") as any)?.update?.({ scheme_id: null })?.in("scheme_id", chunk);
+          } catch {}
+          try {
+            await supabase.from("applications")?.delete?.().in("scheme_id", chunk);
+          } catch {}
 
-      if (error) throw error;
+          const { error } = await supabase
+            .from("schemes")
+            .delete()
+            .in("id", chunk);
 
-      const count = idsToDelete.length;
-      toast.success(
-        `Successfully deleted ${count} ${count === 1 ? "scheme" : "schemes"}`
-      );
-      setSelectedIds(new Set());
-      setIsBulkDeleteDialogOpen(false);
-      qc.invalidateQueries({ queryKey: ["schemes"] });
+          if (error) throw error;
+          deletedIds.push(...chunk);
+        } catch (chunkErr: any) {
+          console.error("Chunk deletion error:", chunkErr);
+          failedIds.push(...chunk);
+          lastError = chunkErr;
+        }
+      }
+
+      if (deletedIds.length > 0) {
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          deletedIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        qc.invalidateQueries({ queryKey: ["schemes"] });
+      }
+
+      if (failedIds.length === 0) {
+        const count = deletedIds.length;
+        toast.success(
+          `Successfully deleted ${count} ${count === 1 ? "scheme" : "schemes"}`
+        );
+        setIsBulkDeleteDialogOpen(false);
+      } else if (deletedIds.length > 0) {
+        toast.error(
+          `Deleted ${deletedIds.length} schemes, but ${failedIds.length} failed: ${lastError?.message || "Unknown error"}`
+        );
+        setIsBulkDeleteDialogOpen(false);
+      } else {
+        throw lastError || new Error("Failed to delete schemes");
+      }
     } catch (err: any) {
       console.error("Bulk delete error:", err);
       toast.error("Failed to delete schemes: " + (err.message || "Unknown error"));
@@ -366,28 +420,78 @@ function Admin() {
 
   const del = async (id: string) => {
     if (!confirm("Delete this scheme?")) return;
-    const { error } = await supabase.from("schemes").delete().eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      try {
+        await supabase.from("user_scheme_matches")?.delete?.().eq("scheme_id", id);
+      } catch {}
+      try {
+        await (supabase.from("documents") as any)?.update?.({ scheme_id: null })?.eq("scheme_id", id);
+      } catch {}
+      try {
+        await supabase.from("applications")?.delete?.().eq("scheme_id", id);
+      } catch {}
+
+      const { error } = await supabase.from("schemes").delete().eq("id", id);
+      if (error) throw error;
+
+      toast.success("Scheme deleted");
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      qc.invalidateQueries({ queryKey: ["schemes"] });
+    } catch (err: any) {
+      console.error("Delete scheme error:", err);
+      toast.error(err?.message || "Failed to delete scheme");
     }
-    toast.success("Scheme deleted");
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    qc.invalidateQueries({ queryKey: ["schemes"] });
   };
 
   return (
     <div>
-      <PageHeader
-        title="Admin · Schemes"
-        subtitle={`${schemes?.length ?? 0} schemes in database`}
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            {selectedIds.size > 0 && (
+      {/* Admin Section Tabs: Schemes Management vs Agent Management */}
+      <div className="mb-6 flex items-center gap-2 border-b">
+        <button
+          type="button"
+          onClick={() => setCurrentTab("schemes")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${
+            currentTab === "schemes"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Library className="h-4 w-4" />
+          Schemes Management ({schemes?.length ?? 0})
+        </button>
+        <button
+          type="button"
+          onClick={() => setCurrentTab("agents")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${
+            currentTab === "agents"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Users className="h-4 w-4" />
+          Agent Management
+          {pendingAgentCount > 0 && (
+            <Badge className="bg-amber-500 text-white hover:bg-amber-600 px-1.5 py-0 text-[11px] font-bold">
+              {pendingAgentCount}
+            </Badge>
+          )}
+        </button>
+      </div>
+
+      {currentTab === "agents" ? (
+        <AdminAgentManagement />
+      ) : (
+        <>
+          <PageHeader
+            title="Admin · Schemes"
+            subtitle={`${schemes?.length ?? 0} schemes in database`}
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedIds.size > 0 && (
               <Button
                 variant="destructive"
                 onClick={() => setIsBulkDeleteDialogOpen(true)}
@@ -1016,6 +1120,8 @@ function Admin() {
           ) : null}
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   );
 }

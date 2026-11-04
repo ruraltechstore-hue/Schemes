@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   KeyRound,
+  ExternalLink,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ import {
 } from "@/components/ui/input-otp";
 import { AuthLayout } from "@/components/AuthLayout";
 import { STATES } from "@/lib/constants";
-import { sendOtpRequest, verifyOtpRequest } from "@/lib/otp-client";
+import { sendOtpRequest, verifyOtpRequest, notifyAdminApprovalRequest } from "@/lib/otp-client";
 
 export default Register;
 
@@ -39,9 +40,12 @@ function Register() {
     name: "",
     email: "",
     mobile: "",
-    password: "",
+    agencyName: "",
+    address: "",
     state: "",
     district: "",
+    password: "",
+    confirmPassword: "",
   });
 
   // Flow step: "form" | "otp" | "success"
@@ -90,38 +94,6 @@ function Register() {
     };
   }, [step]);
 
-  // Listen for Supabase Auth changes (e.g. if user clicked confirmation link in their email)
-  useEffect(() => {
-    if (step !== "otp") return;
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if ((event === "SIGNED_IN" || event === "USER_UPDATED") && session?.user) {
-        try {
-          await supabase.from("profiles").upsert({
-            id: session.user.id,
-            full_name: f.name.trim(),
-            email: f.email.trim().toLowerCase(),
-            mobile: f.mobile.trim(),
-            state: f.state,
-            district: f.district.trim(),
-            updated_at: new Date().toISOString(),
-          });
-        } catch {
-          // Non-fatal
-        }
-        toast.success("Account verified successfully! Welcome to Scheme Finder.");
-        setStep("success");
-        setTimeout(() => {
-          navigate("/dashboard", { replace: true });
-        }, 1000);
-      }
-    });
-
-    return () => {
-      authListener?.subscription?.unsubscribe();
-    };
-  }, [step, f, navigate]);
-
   // Format seconds to mm:ss
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -152,6 +124,11 @@ function Register() {
       toast.error("Password must be at least 6 characters long");
       return;
     }
+    if (f.confirmPassword && f.confirmPassword !== f.password) {
+      toast.error("Passwords do not match");
+      setErrorMessage("Passwords do not match");
+      return;
+    }
 
     setBusy(true);
 
@@ -165,8 +142,12 @@ function Register() {
           data: {
             full_name: name,
             mobile: f.mobile.trim(),
+            agency_name: f.agencyName?.trim() || `${name}'s Agency`,
+            address: f.address?.trim() || `${f.district.trim()}, ${f.state}`,
             state: f.state,
             district: f.district.trim(),
+            role: "agent",
+            is_agent: true,
           },
         },
       });
@@ -175,6 +156,16 @@ function Register() {
       if (signUpError) {
         if (signUpError.message.toLowerCase().includes("already registered")) {
           const msg = "An account with this email already exists. Please log in.";
+          setErrorMessage(msg);
+          toast.error(msg);
+          setBusy(false);
+          return;
+        } else if (
+          signUpError.message.toLowerCase().includes("signups are disabled") ||
+          signUpError.message.toLowerCase().includes("signup is disabled")
+        ) {
+          const msg =
+            "Email signups are disabled in Supabase. In your Supabase Dashboard (Authentication → Providers → Email), ensure BOTH 'Enable Email provider' and 'Allow new users to sign up' are toggled ON. Only 'Confirm email' should be toggled OFF.";
           setErrorMessage(msg);
           toast.error(msg);
           setBusy(false);
@@ -213,6 +204,25 @@ function Register() {
         toast.error(msg);
         setBusy(false);
         return;
+      }
+
+      // Create corresponding agent profile as UNVERIFIED (no Admin approval request at this stage)
+      try {
+        await supabase.from("agent_profiles").upsert({
+          id: signUpData.user.id,
+          full_name: name,
+          email,
+          mobile: f.mobile.trim(),
+          agency_name: f.agencyName?.trim() || `${name}'s Agency`,
+          address: f.address?.trim() || `${f.district.trim()}, ${f.state}`,
+          state: f.state,
+          district: f.district.trim(),
+          status: "unverified",
+          email_verified: false,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn("Could not pre-register unverified agent profile:", err);
       }
 
       // 2. Dispatch OTP / transition to OTP screen
@@ -417,7 +427,9 @@ function Register() {
         return;
       }
 
-      // 4. Ensure profile is created/updated in profiles table
+      // Step 3 – Successful OTP Verification:
+      // Mark agent's email as verified, activate agent profile with approval status 'pending',
+      // save verified registration details, and create the Admin approval request.
       try {
         await supabase.from("profiles").upsert({
           id: authUser.id,
@@ -428,17 +440,48 @@ function Register() {
           district: f.district.trim(),
           updated_at: new Date().toISOString(),
         });
-      } catch {
-        // Non-fatal if trigger or previous upsert already handled it
+
+        await supabase.from("agent_profiles").upsert({
+          id: authUser.id,
+          full_name: f.name.trim(),
+          email,
+          mobile: f.mobile.trim(),
+          agency_name: f.agencyName?.trim() || `${f.name.trim()}'s Agency`,
+          address: f.address?.trim() || `${f.district.trim()}, ${f.state}`,
+          state: f.state,
+          district: f.district.trim(),
+          status: "pending",
+          email_verified: true,
+          otp_verified_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        // Trigger secure RPC to ensure server-side verification status
+        try {
+          await supabase.rpc("complete_agent_email_verification", { _user_id: authUser.id });
+        } catch {
+          // Fallback if RPC is not yet applied in remote schema
+        }
+
+        // Send approval notification to Admin
+        await notifyAdminApprovalRequest({
+          id: authUser.id,
+          fullName: f.name.trim(),
+          email,
+          mobile: f.mobile.trim(),
+          agencyName: f.agencyName?.trim() || `${f.name.trim()}'s Agency`,
+          address: f.address?.trim() || `${f.district.trim()}, ${f.state}`,
+          state: f.state,
+          district: f.district.trim(),
+        }).catch(() => null);
+      } catch (err) {
+        console.warn("Could not activate verified agent profile:", err);
       }
 
-      toast.success("Account verified successfully! Welcome to Scheme Finder.");
+      const verifiedSuccessMsg =
+        "Your email has been verified successfully. Your registration request has been sent to the Admin for approval. You will be able to access your Agent Dashboard after approval.";
+      toast.success(verifiedSuccessMsg);
       setStep("success");
-
-      // Redirect to dashboard
-      setTimeout(() => {
-        navigate("/dashboard", { replace: true });
-      }, 1000);
     } catch (err: any) {
       const msg = err?.message || "An unexpected error occurred during verification. Please try again.";
       setErrorMessage(msg);
@@ -457,23 +500,33 @@ function Register() {
     setStep("form");
   };
 
-  // Success View
+  // Success View - Agent Registration Pending Approval
   if (step === "success") {
     return (
-      <AuthLayout title="Account Verified!" subtitle="Redirecting to your dashboard...">
+      <AuthLayout title="Registration Submitted" subtitle="Agent Approval Pending">
         <div className="py-6 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-            <CheckCircle2 className="h-10 w-10 animate-pulse" />
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+            <Clock className="h-10 w-10 animate-pulse" />
           </div>
-          <h3 className="mt-4 text-lg font-semibold text-foreground">Welcome to Scheme Finder</h3>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Your email <b>{f.email}</b> has been verified and your account is active.
+          <h3 className="mt-4 text-xl font-bold text-foreground">Welcome to Scheme Finder</h3>
+          <p className="mt-3 text-sm font-medium text-emerald-800 bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+            Your email has been verified successfully. Your registration request has been sent to the Admin for approval. You will be able to access your Agent Dashboard after approval.
+          </p>
+          <div className="mt-4 rounded-lg border bg-muted/40 p-4 text-left text-xs space-y-1.5">
+            <p><span className="text-muted-foreground">Full Name:</span> <span className="font-semibold">{f.name}</span></p>
+            <p><span className="text-muted-foreground">Email:</span> <span className="font-semibold">{f.email}</span></p>
+            <p><span className="text-muted-foreground">Agency / Organization:</span> <span className="font-semibold">{f.agencyName || `${f.name}'s Agency`}</span></p>
+            <p><span className="text-muted-foreground">Status:</span> <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-800">Pending Admin Approval</span></p>
+          </div>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Once approved by the platform administrator, you will be able to log in and access the Agent Dashboard to manage beneficiaries and check scheme eligibility.
           </p>
           <Button
             className="mt-6 w-full"
-            onClick={() => navigate("/dashboard", { replace: true })}
+            variant="outline"
+            asChild
           >
-            Go to Dashboard
+            <Link to="/auth">Return to Agent Login</Link>
           </Button>
         </div>
       </AuthLayout>
@@ -617,9 +670,34 @@ function Register() {
   return (
     <AuthLayout title="Create your account" subtitle="It takes less than a minute">
       {errorMessage && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-          <span>{errorMessage}</span>
+        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5 text-xs text-destructive space-y-2">
+          <div className="flex items-start gap-2 font-semibold text-sm">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>Registration Notice</span>
+          </div>
+          <p className="leading-relaxed">{errorMessage}</p>
+          {(errorMessage.includes("Confirm email") || errorMessage.includes("signups are disabled")) && (
+            <div className="mt-2 pt-2 border-t border-destructive/20 text-xs text-foreground/90 space-y-2">
+              <p className="font-semibold text-foreground">Exact Supabase Dashboard Settings:</p>
+              <ol className="list-decimal list-inside space-y-1.5 pl-1 text-muted-foreground">
+                <li>
+                  Go to{" "}
+                  <a
+                    href="https://supabase.com/dashboard/project/vwzzljeawkerdugpmgvn/auth/providers"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline text-primary font-medium hover:text-primary/80 inline-flex items-center gap-0.5"
+                  >
+                    Supabase Dashboard ➔ Authentication ➔ Providers ➔ Email <ExternalLink className="h-3 w-3 inline" />
+                  </a>
+                </li>
+                <li><b>Enable Email provider</b>: Keep <span className="text-emerald-600 font-semibold">ON</span></li>
+                <li><b>Allow new users to sign up</b>: Keep <span className="text-emerald-600 font-semibold">ON</span> (Required for user accounts)</li>
+                <li><b>Confirm email</b>: Toggle <span className="text-amber-600 font-semibold">OFF</span> (Disabled, Scheme Compass handles 6-digit OTP verification)</li>
+                <li>Click <b>Save</b> at the bottom, then click <b>Register Agent</b> again</li>
+              </ol>
+            </div>
+          )}
         </div>
       )}
 
@@ -658,15 +736,21 @@ function Register() {
           />
         </div>
         <div>
-          <Label htmlFor="reg-password">Password</Label>
+          <Label htmlFor="reg-agency">Organization / Agency Name</Label>
           <Input
-            id="reg-password"
-            type="password"
-            minLength={6}
-            required
-            value={f.password}
-            onChange={set("password")}
-            placeholder="At least 6 characters"
+            id="reg-agency"
+            value={f.agencyName}
+            onChange={set("agencyName")}
+            placeholder="e.g. Gram Seva Kendra / Citizen Connect"
+          />
+        </div>
+        <div>
+          <Label htmlFor="reg-address">Address</Label>
+          <Input
+            id="reg-address"
+            value={f.address}
+            onChange={set("address")}
+            placeholder="Office / operational address"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -693,6 +777,31 @@ function Register() {
               value={f.district}
               onChange={set("district")}
               placeholder="Your district"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="reg-password">Password</Label>
+            <Input
+              id="reg-password"
+              type="password"
+              minLength={6}
+              required
+              value={f.password}
+              onChange={set("password")}
+              placeholder="At least 6 characters"
+            />
+          </div>
+          <div>
+            <Label htmlFor="reg-confirm-password">Confirm Pass&#8203;word</Label>
+            <Input
+              id="reg-confirm-password"
+              type="password"
+              minLength={6}
+              value={f.confirmPassword}
+              onChange={set("confirmPassword")}
+              placeholder="Repeat password"
             />
           </div>
         </div>

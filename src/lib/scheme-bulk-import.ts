@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import Papa from "papaparse";
 import { isYouTubeUrl } from "./video-helpers";
 import { CASTE_CATEGORIES, DOC_TYPES, GENDERS, OCCUPATIONS, SCHEME_CATEGORIES, STATES } from "./constants";
 import { splitRequiredDocuments } from "./document-helpers";
@@ -757,6 +758,167 @@ export interface ParsedRowResult {
   warnings: string[];
   existingScheme?: Scheme | undefined;
   skip: boolean;
+  sourceFileId?: string | undefined;
+  sourceFileName?: string | undefined;
+}
+
+export interface ParsedFileData {
+  id: string;
+  file: File;
+  name: string;
+  size: number;
+  headers: string[];
+  rawRows: Record<string, any>[];
+  columnMapping: Record<string, TargetFieldKey | "__ignore__">;
+}
+
+/**
+ * Safely reads a File object as text across browser and Node/testing environments
+ */
+export function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof file.text === "function") {
+      file.text().then(resolve).catch(reject);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) || "");
+      reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
+      reader.readAsText(file, "UTF-8");
+    }
+  });
+}
+
+/**
+ * Safely reads a File object as ArrayBuffer across browser and Node/testing environments
+ */
+export function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    if (typeof file.arrayBuffer === "function") {
+      file.arrayBuffer().then(resolve).catch(reject);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as ArrayBuffer) || new ArrayBuffer(0));
+      reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
+      reader.readAsArrayBuffer(file);
+    }
+  });
+}
+
+/**
+ * Parses an individual CSV or Excel file into structured rows and auto-maps column headers.
+ */
+export async function parseBulkFile(file: File): Promise<ParsedFileData> {
+  let headers: string[] = [];
+  let parsedData: Record<string, any>[] = [];
+
+  const isCsv = /\.csv$/i.test(file.name) || file.type === "text/csv";
+  const isExcel = /\.xlsx?$/i.test(file.name) || file.type.includes("spreadsheet") || file.type.includes("excel");
+
+  if (isCsv) {
+    const rawText = await readFileAsText(file);
+    const cleanText = rawText.replace(/^\uFEFF/, "");
+    if (!cleanText.trim()) {
+      throw new Error(`The uploaded CSV file "${file.name}" is empty`);
+    }
+
+    // Parse with PapaParse
+    let results = Papa.parse<Record<string, any>>(cleanText, {
+      header: true,
+      skipEmptyLines: "greedy",
+      dynamicTyping: false,
+    });
+
+    // Delimiter fallback: if single field or semicolon separated
+    if (
+      (!results.meta.fields || results.meta.fields.length <= 1) &&
+      cleanText.includes(";")
+    ) {
+      results = Papa.parse<Record<string, any>>(cleanText, {
+        header: true,
+        skipEmptyLines: "greedy",
+        delimiter: ";",
+        dynamicTyping: false,
+      });
+    }
+
+    // If PapaParse returned 0 fields or failed, fallback to XLSX parser
+    if (!results.meta.fields || results.meta.fields.length === 0 || !results.data || results.data.length === 0) {
+      const wb = XLSX.read(cleanText, { type: "string" });
+      const sheetName = wb.SheetNames[0];
+      if (!sheetName) throw new Error(`Could not parse CSV content in "${file.name}"`);
+      const ws = wb.Sheets[sheetName];
+      const sheetAoa = XLSX.utils.sheet_to_json<string[]>(ws!, { header: 1, blankrows: false });
+      if (!sheetAoa.length) throw new Error(`The uploaded file "${file.name}" has no content`);
+      headers = (sheetAoa[0] || []).map((h) => String(h ?? "").replace(/^\uFEFF/, "").trim()).filter(Boolean);
+      parsedData = XLSX.utils.sheet_to_json<Record<string, any>>(ws!, { defval: "", raw: false });
+    } else {
+      headers = (results.meta.fields || []).map((h) => String(h).replace(/^\uFEFF/, "").trim()).filter(Boolean);
+      parsedData = results.data;
+    }
+
+    // Clean each row's keys so they are trimmed without BOM
+    parsedData = parsedData
+      .map((row) => {
+        const cleanRow: Record<string, any> = {};
+        for (const [k, v] of Object.entries(row)) {
+          const cleanK = String(k).replace(/^\uFEFF/, "").trim();
+          if (cleanK) {
+            cleanRow[cleanK] = v;
+          }
+        }
+        return cleanRow;
+      })
+      .filter((row) => Object.values(row).some((val) => String(val ?? "").trim().length > 0));
+  } else if (isExcel) {
+    const buffer = await readFileAsArrayBuffer(file);
+    const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) throw new Error(`Excel file "${file.name}" contains no sheets`);
+    const ws = wb.Sheets[sheetName];
+    if (!ws) throw new Error(`Cannot read first sheet in "${file.name}"`);
+
+    const sheetAoa = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, blankrows: false });
+    if (!sheetAoa.length) throw new Error(`The selected Excel sheet in "${file.name}" is empty`);
+
+    headers = (sheetAoa[0] || []).map((h) => String(h ?? "").replace(/^\uFEFF/, "").trim()).filter(Boolean);
+    const rawJson = XLSX.utils.sheet_to_json<Record<string, any>>(ws, {
+      defval: "",
+      raw: false,
+      dateNF: "yyyy-mm-dd",
+    });
+
+    parsedData = rawJson
+      .map((row) => {
+        const cleanRow: Record<string, any> = {};
+        for (const [k, v] of Object.entries(row)) {
+          const cleanK = String(k).replace(/^\uFEFF/, "").trim();
+          if (cleanK) {
+            cleanRow[cleanK] = v;
+          }
+        }
+        return cleanRow;
+      })
+      .filter((row) => Object.values(row).some((val) => String(val ?? "").trim().length > 0));
+  } else {
+    throw new Error(`Unsupported format for "${file.name}". Please upload CSV (.csv) or Excel (.xlsx, .xls) files.`);
+  }
+
+  if (!parsedData.length) {
+    throw new Error(`No data rows found in "${file.name}".`);
+  }
+
+  const initialMapping = autoMapHeaders(headers);
+  const fileId = `${file.name.replace(/[^a-zA-Z0-9_-]/g, "_")}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  return {
+    id: fileId,
+    file,
+    name: file.name,
+    size: file.size,
+    headers,
+    rawRows: parsedData,
+    columnMapping: initialMapping,
+  };
 }
 
 /**

@@ -14,6 +14,231 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_profiles: {
+        Row: {
+          address: string
+          admin_notified?: boolean
+          agency_name: string
+          created_at: string | null
+          district: string
+          email: string
+          email_verified: boolean
+          full_name: string
+          id: string
+          mobile: string
+          otp_verified_at?: string | null
+          rejection_reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          state: string
+          status: "unverified" | "pending" | "approved" | "rejected" | "suspended"
+          suspension_reason: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          address: string
+          admin_notified?: boolean
+          agency_name: string
+          created_at?: string | null
+          district: string
+          email: string
+          email_verified?: boolean
+          full_name: string
+          id: string
+          mobile: string
+          otp_verified_at?: string | null
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          state: string
+          status?: "unverified" | "pending" | "approved" | "rejected" | "suspended"
+          suspension_reason?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          address?: string
+          admin_notified?: boolean
+          agency_name?: string
+          created_at?: string | null
+          district?: string
+          email?: string
+          email_verified?: boolean
+          full_name?: string
+          id?: string
+          mobile?: string
+          otp_verified_at?: string | null
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          state?: string
+          status?: "unverified" | "pending" | "approved" | "rejected" | "suspended"
+          suspension_reason?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      managed_users: {
+        Row: {
+          age: number | null
+          agent_id: string
+          annual_income: number | null
+          area: string | null
+          category: string | null
+          created_at: string | null
+          disability_percentage: number | null
+          district: string
+          dob: string | null
+          education: string | null
+          email: string | null
+          extra_criteria: Json | null
+          family_size: number | null
+          full_name: string
+          gender: string
+          has_disability: boolean | null
+          id: string
+          is_farmer: boolean | null
+          is_student: boolean | null
+          marital_status: string | null
+          mobile: string | null
+          occupation: string | null
+          state: string
+          updated_at: string | null
+        }
+        Insert: {
+          age?: number | null
+          agent_id: string
+          annual_income?: number | null
+          area?: string | null
+          category?: string | null
+          created_at?: string | null
+          disability_percentage?: number | null
+          district: string
+          dob?: string | null
+          education?: string | null
+          email?: string | null
+          extra_criteria?: Json | null
+          family_size?: number | null
+          full_name: string
+          gender: string
+          has_disability?: boolean | null
+          id?: string
+          is_farmer?: boolean | null
+          is_student?: boolean | null
+          marital_status?: string | null
+          mobile?: string | null
+          occupation?: string | null
+          state: string
+          updated_at?: string | null
+        }
+        Update: {
+          age?: number | null
+          agent_id?: string
+          annual_income?: number | null
+          area?: string | null
+          category?: string | null
+          created_at?: string | null
+          disability_percentage?: number | null
+          district?: string
+          dob?: string | null
+          education?: string | null
+          email?: string | null
+          extra_criteria?: Json | null
+          family_size?: number | null
+          full_name?: string
+          gender?: string
+          has_disability?: boolean | null
+          id?: string
+          is_farmer?: boolean | null
+          is_student?: boolean | null
+          marital_status?: string | null
+          mobile?: string | null
+          occupation?: string | null
+          state?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      eligibility_check_history: {
+        Row: {
+          agent_id: string
+          batch_id: string | null
+          check_type: string
+          created_at: string | null
+          id: string
+          status: string
+          total_eligible_matches: number
+          total_schemes_checked: number
+          total_users: number
+        }
+        Insert: {
+          agent_id: string
+          batch_id?: string | null
+          check_type?: string
+          created_at?: string | null
+          id?: string
+          status?: string
+          total_eligible_matches?: number
+          total_schemes_checked?: number
+          total_users?: number
+        }
+        Update: {
+          agent_id?: string
+          batch_id?: string | null
+          check_type?: string
+          created_at?: string | null
+          id?: string
+          status?: string
+          total_eligible_matches?: number
+          total_schemes_checked?: number
+          total_users?: number
+        }
+        Relationships: []
+      }
+      user_scheme_matches: {
+        Row: {
+          agent_id: string
+          check_id: string | null
+          created_at: string | null
+          id: string
+          match_percentage: number
+          missing_criteria: string[]
+          missing_documents: string[]
+          reasons: string[]
+          scheme_id: string
+          status: "eligible" | "ineligible" | "needs_verification"
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          agent_id: string
+          check_id?: string | null
+          created_at?: string | null
+          id?: string
+          match_percentage?: number
+          missing_criteria?: string[]
+          missing_documents?: string[]
+          reasons?: string[]
+          scheme_id: string
+          status: "eligible" | "ineligible" | "needs_verification"
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          agent_id?: string
+          check_id?: string | null
+          created_at?: string | null
+          id?: string
+          match_percentage?: number
+          missing_criteria?: string[]
+          missing_documents?: string[]
+          reasons?: string[]
+          scheme_id?: string
+          status?: "eligible" | "ineligible" | "needs_verification"
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       applications: {
         Row: {
           created_at: string | null
@@ -54,32 +279,41 @@ export type Database = {
       }
       documents: {
         Row: {
+          agent_id: string | null
           created_at: string | null
           doc_type: string
           file_name: string
           file_path: string
           id: string
+          managed_user_id: string | null
           mime_type: string | null
+          scheme_id: string | null
           status: string
           user_id: string
         }
         Insert: {
+          agent_id?: string | null
           created_at?: string | null
           doc_type: string
           file_name: string
           file_path: string
           id?: string
+          managed_user_id?: string | null
           mime_type?: string | null
+          scheme_id?: string | null
           status?: string
           user_id?: string
         }
         Update: {
+          agent_id?: string | null
           created_at?: string | null
           doc_type?: string
           file_name?: string
           file_path?: string
           id?: string
+          managed_user_id?: string | null
           mime_type?: string | null
+          scheme_id?: string | null
           status?: string
           user_id?: string
         }
@@ -228,6 +462,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      complete_agent_email_verification: {
+        Args: {
+          _user_id: string
+        }
+        Returns: Database["public"]["Tables"]["agent_profiles"]["Row"]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -237,7 +477,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: "admin" | "user"
+      app_role: "admin" | "user" | "agent"
     }
     CompositeTypes: {
       [_ in never]: never
