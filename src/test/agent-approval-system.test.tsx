@@ -468,6 +468,9 @@ describe("Agent Registration & Approval Workflow – Strict OTP Verification", (
     const approveBtn = screen.getByRole("button", { name: /^Approve$/i });
     fireEvent.click(approveBtn);
 
+    const confirmApproveBtn = await screen.findByRole("button", { name: /confirm approval/i });
+    fireEvent.click(confirmApproveBtn);
+
     await waitFor(() => {
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -552,5 +555,66 @@ describe("Agent Registration & Approval Workflow – Strict OTP Verification", (
     expect(screen.queryByTestId("dashboard-content")).not.toBeInTheDocument();
     expect(screen.getByText(/Your agent registration has been rejected by the administrator\./i)).toBeInTheDocument();
     expect(screen.getByText(/Invalid business address/i)).toBeInTheDocument();
+  });
+
+  // Scenario 9: Admin reactivates suspended agent -> Prompts confirmation dialog before reactivating
+  it("Scenario 9: Admin reactivates suspended agent -> Prompts confirmation dialog before reactivating", async () => {
+    const mockUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    });
+
+    vi.mocked(supabase.from).mockReturnValue({
+      update: mockUpdate,
+    } as any);
+
+    const suspendedAgent = {
+      id: "agent-suspended-1",
+      full_name: "Anita Sharma",
+      email: "anita@kendra.org",
+      mobile: "9876543210",
+      agency_name: "Gram Seva",
+      status: "suspended",
+      email_verified: true,
+      suspension_reason: "Temporary compliance review",
+      created_at: new Date().toISOString(),
+    };
+
+    vi.spyOn(agentDataHooks, "useAllAgentProfiles").mockReturnValue({
+      data: [suspendedAgent],
+      isLoading: false,
+      refetch: vi.fn(),
+    } as any);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <AdminAgentManagement defaultTab="suspended" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText("Anita Sharma")).toBeInTheDocument();
+
+    // Click Reactivate button
+    const reactivateBtn = screen.getByRole("button", { name: /^Reactivate$/i });
+    fireEvent.click(reactivateBtn);
+
+    // Confirmation popup should appear
+    expect(screen.getByTestId("reactivate-agent-dialog")).toBeInTheDocument();
+    expect(screen.getByText(/Reactivate Agent Account\?/i)).toBeInTheDocument();
+    expect(screen.getByText(/Are you sure you want to reactivate/i)).toBeInTheDocument();
+
+    // Confirm reactivation
+    const confirmReactivateBtn = screen.getByTestId("confirm-reactivate-agent-btn");
+    fireEvent.click(confirmReactivateBtn);
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "approved",
+          suspension_reason: null,
+        })
+      );
+    });
   });
 });

@@ -32,20 +32,34 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUser } from "@/hooks/use-app-data";
 import { useAllAgentProfiles } from "@/hooks/use-agent-data";
 
-export function AdminAgentManagement() {
+export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: string } = {}) {
 
   const { data: agents = [], isLoading, refetch } = useAllAgentProfiles();
   const { data: currentUser } = useUser();
   const qc = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<string>("pending");
+  const [activeTab, setActiveTab] = useState<string>(defaultTab);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<any | null>(null);
   const [isViewOpen, setIsViewOpen] = useState(false);
+
+  // Approval Dialog State
+  const [isApproveOpen, setIsApproveOpen] = useState(false);
+  const [approveTargetAgent, setApproveTargetAgent] = useState<any | null>(null);
 
   // Rejection Dialog State
   const [isRejectOpen, setIsRejectOpen] = useState(false);
@@ -56,6 +70,10 @@ export function AdminAgentManagement() {
   const [isSuspendOpen, setIsSuspendOpen] = useState(false);
   const [suspendReason, setSuspendReason] = useState("");
   const [suspendTargetId, setSuspendTargetId] = useState<string | null>(null);
+
+  // Reactivation Dialog State
+  const [isReactivateOpen, setIsReactivateOpen] = useState(false);
+  const [reactivateTargetAgent, setReactivateTargetAgent] = useState<any | null>(null);
 
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -79,7 +97,15 @@ export function AdminAgentManagement() {
     );
   };
 
-  const handleApprove = async (agentId: string) => {
+  const openApproveDialog = (agentId: string) => {
+    const target = agents.find((a) => a.id === agentId) || (selectedAgent?.id === agentId ? selectedAgent : null);
+    setApproveTargetAgent(target || { id: agentId });
+    setIsApproveOpen(true);
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!approveTargetAgent?.id) return;
+    const agentId = approveTargetAgent.id;
     setBusyId(agentId);
     try {
       const { error } = await supabase
@@ -96,6 +122,7 @@ export function AdminAgentManagement() {
       if (error) throw error;
 
       toast.success("Agent approved successfully! Access granted to Agent Dashboard.");
+      setIsApproveOpen(false);
       qc.invalidateQueries({ queryKey: ["allAgentProfiles"] });
       if (selectedAgent?.id === agentId) {
         setSelectedAgent((prev: any) => ({ ...prev, status: "approved" }));
@@ -185,7 +212,15 @@ export function AdminAgentManagement() {
     }
   };
 
-  const handleReactivate = async (agentId: string) => {
+  const openReactivateDialog = (agentId: string) => {
+    const target = agents.find((a) => a.id === agentId) || (selectedAgent?.id === agentId ? selectedAgent : null);
+    setReactivateTargetAgent(target || { id: agentId });
+    setIsReactivateOpen(true);
+  };
+
+  const handleConfirmReactivate = async () => {
+    if (!reactivateTargetAgent?.id) return;
+    const agentId = reactivateTargetAgent.id;
     setBusyId(agentId);
     try {
       const { error } = await supabase
@@ -201,6 +236,7 @@ export function AdminAgentManagement() {
       if (error) throw error;
 
       toast.success("Agent reactivated successfully!");
+      setIsReactivateOpen(false);
       qc.invalidateQueries({ queryKey: ["allAgentProfiles"] });
       if (selectedAgent?.id === agentId) {
         setSelectedAgent((prev: any) => ({ ...prev, status: "approved" }));
@@ -283,7 +319,7 @@ export function AdminAgentManagement() {
             status="pending"
             isLoading={isLoading}
             onView={openViewModal}
-            onApprove={handleApprove}
+            onApprove={openApproveDialog}
             onReject={openRejectDialog}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
@@ -310,7 +346,7 @@ export function AdminAgentManagement() {
             status="rejected"
             isLoading={isLoading}
             onView={openViewModal}
-            onApprove={handleApprove}
+            onApprove={openApproveDialog}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
           />
@@ -323,7 +359,7 @@ export function AdminAgentManagement() {
             status="suspended"
             isLoading={isLoading}
             onView={openViewModal}
-            onReactivate={handleReactivate}
+            onReactivate={openReactivateDialog}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
           />
@@ -428,7 +464,7 @@ export function AdminAgentManagement() {
                     <Button
                       className="bg-emerald-600 hover:bg-emerald-700 text-white"
                       disabled={busyId === selectedAgent.id}
-                      onClick={() => handleApprove(selectedAgent.id)}
+                      onClick={() => openApproveDialog(selectedAgent.id)}
                     >
                       <CheckCircle className="h-4 w-4 mr-1.5" />
                       Approve Agent
@@ -454,7 +490,7 @@ export function AdminAgentManagement() {
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700 text-white"
                     disabled={busyId === selectedAgent.id}
-                    onClick={() => handleReactivate(selectedAgent.id)}
+                    onClick={() => openReactivateDialog(selectedAgent.id)}
                   >
                     <PlayCircle className="h-4 w-4 mr-1.5" />
                     Reactivate Agent
@@ -465,7 +501,7 @@ export function AdminAgentManagement() {
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700 text-white"
                     disabled={busyId === selectedAgent.id}
-                    onClick={() => handleApprove(selectedAgent.id)}
+                    onClick={() => openApproveDialog(selectedAgent.id)}
                   >
                     <CheckCircle className="h-4 w-4 mr-1.5" />
                     Re-evaluate & Approve
@@ -477,15 +513,86 @@ export function AdminAgentManagement() {
         </DialogContent>
       </Dialog>
 
+      {/* Approve Agent Confirmation Modal */}
+      <AlertDialog open={isApproveOpen} onOpenChange={setIsApproveOpen}>
+        <AlertDialogContent data-testid="approve-agent-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-emerald-600">
+              <CheckCircle className="h-5 w-5" />
+              Approve Agent Application?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to approve{" "}
+              <strong className="text-foreground">
+                {approveTargetAgent?.full_name || "this agent"}
+              </strong>
+              {approveTargetAgent?.agency_name ? ` (${approveTargetAgent.agency_name})` : ""}?
+              {" "}This action will grant them immediate access to the Agent Portal and citizen beneficiary management.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busyId === approveTargetAgent?.id}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={(e) => {
+                e.preventDefault();
+                handleConfirmApprove();
+              }}
+              disabled={busyId === approveTargetAgent?.id}
+              data-testid="confirm-approve-agent-btn"
+            >
+              Confirm Approval
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reactivate Agent Confirmation Modal */}
+      <AlertDialog open={isReactivateOpen} onOpenChange={setIsReactivateOpen}>
+        <AlertDialogContent data-testid="reactivate-agent-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-emerald-600">
+              <PlayCircle className="h-5 w-5" />
+              Reactivate Agent Account?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to reactivate{" "}
+              <strong className="text-foreground">
+                {reactivateTargetAgent?.full_name || "this agent"}
+              </strong>
+              {reactivateTargetAgent?.agency_name ? ` (${reactivateTargetAgent.agency_name})` : ""}?
+              {" "}This action will lift their suspension and restore their full access to the Agent Portal.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busyId === reactivateTargetAgent?.id}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={(e) => {
+                e.preventDefault();
+                handleConfirmReactivate();
+              }}
+              disabled={busyId === reactivateTargetAgent?.id}
+              data-testid="confirm-reactivate-agent-btn"
+            >
+              Confirm Reactivation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Reject Agent Modal */}
       <Dialog open={isRejectOpen} onOpenChange={setIsRejectOpen}>
-        <DialogContent>
+        <DialogContent data-testid="reject-agent-dialog">
           <DialogHeader>
-            <DialogTitle>Reject Agent Registration</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <XCircle className="h-5 w-5" />
+              Reject Agent Registration
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              Please state the reason for rejecting this agent application. This reason will be recorded and displayed to the agent upon login.
+              Are you sure you want to reject this agent registration request? Please state the reason for rejecting this agent application. This reason will be recorded and displayed to the agent upon login.
             </p>
             <div>
               <Label htmlFor="reject-reason">Reason for Rejection</Label>
@@ -506,6 +613,7 @@ export function AdminAgentManagement() {
               variant="destructive"
               onClick={handleConfirmReject}
               disabled={busyId === rejectTargetId}
+              data-testid="confirm-reject-agent-btn"
             >
               Confirm Rejection
             </Button>

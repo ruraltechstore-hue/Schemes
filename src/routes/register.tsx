@@ -15,6 +15,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -783,9 +784,8 @@ function Register() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <Label htmlFor="reg-password">Password</Label>
-            <Input
+            <PasswordInput
               id="reg-password"
-              type="password"
               minLength={6}
               required
               value={f.password}
@@ -795,9 +795,8 @@ function Register() {
           </div>
           <div>
             <Label htmlFor="reg-confirm-password">Confirm Pass&#8203;word</Label>
-            <Input
+            <PasswordInput
               id="reg-confirm-password"
-              type="password"
               minLength={6}
               value={f.confirmPassword}
               onChange={set("confirmPassword")}

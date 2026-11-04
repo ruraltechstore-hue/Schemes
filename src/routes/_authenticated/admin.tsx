@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, ShieldAlert, Video, Loader2, RotateCcw, AlertCircle, X, Search, User, Users, Library } from "lucide-react";
+import { Pencil, Plus, Trash2, ShieldAlert, Video, Loader2, RotateCcw, AlertCircle, X, Search, User, Users, Library, ChevronLeft, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { BulkUpload } from "@/components/BulkUpload";
 import { AdminVideoUploader } from "@/components/AdminVideoUploader";
@@ -111,6 +111,10 @@ function Admin() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [selectedLevel, setSelectedLevel] = useState<string>("All");
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Tab navigation state for Schemes vs Agents (defaults to schemes, reads ?tab=agents if available)
   const [currentTab, setCurrentTab] = useState<"schemes" | "agents">(() => {
@@ -311,6 +315,25 @@ function Admin() {
     const matchesLevel = selectedLevel === "All" || s.level === selectedLevel;
     return matchesSearch && matchesCategory && matchesLevel;
   });
+
+  // Reset pagination when search or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedCategory, selectedLevel]);
+
+  const totalSchemes = displayedSchemes.length;
+  const totalPages = Math.max(1, Math.ceil(totalSchemes / pageSize));
+
+  // Clamp current page if total pages decrease
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalSchemes);
+  const paginatedSchemes = displayedSchemes.slice(startIndex, endIndex);
 
   const allDisplayedSelected =
     displayedSchemes.length > 0 &&
@@ -638,7 +661,7 @@ function Admin() {
                 </td>
               </tr>
             ) : (
-              displayedSchemes.map((s) => {
+              paginatedSchemes.map((s) => {
                 const isSelected = selectedIds.has(s.id);
                 const vid = getSchemeVideo(s);
                 return (
@@ -699,6 +722,67 @@ function Admin() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination Controls */}
+      {totalSchemes > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-3">
+          <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+            <span>
+              Showing <b>{totalSchemes === 0 ? 0 : startIndex + 1}</b>–<b>{endIndex}</b> of <b>{totalSchemes}</b> schemes
+            </span>
+            <span className="text-muted-foreground/40">|</span>
+            <div className="flex items-center gap-1.5">
+              <span>Per page:</span>
+              <Select
+                value={String(pageSize)}
+                onValueChange={(val) => {
+                  setPageSize(Number(val));
+                  setCurrentPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-[70px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[10, 20, 50, 100].map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs sm:text-sm font-medium text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="gap-1 h-8 px-2 text-xs"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="gap-1 h-8 px-2 text-xs"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk Delete Confirmation Dialog */}
       <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>

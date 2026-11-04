@@ -28,6 +28,16 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useUser, useProfile, useIsAdmin } from "@/hooks/use-app-data";
 import { useAgentProfile } from "@/hooks/use-agent-data";
 import { getInitials } from "@/lib/profile-helpers";
@@ -54,8 +64,9 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data: isAdmin } = useIsAdmin();
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
 
-  const logout = async () => {
+  const confirmLogout = async () => {
     await qc.cancelQueries();
     qc.clear();
     await supabase.auth.signOut();
@@ -78,10 +89,39 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
           </Link>
         ))}
       </nav>
-      <button onClick={logout} className={cls}>
+      <button
+        onClick={() => setIsLogoutDialogOpen(true)}
+        className={cls}
+        data-testid="logout-button"
+      >
         <LogOut className="h-4 w-4" />
         Logout
       </button>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={isLogoutDialogOpen} onOpenChange={setIsLogoutDialogOpen}>
+        <AlertDialogContent data-testid="logout-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <LogOut className="h-5 w-5 text-muted-foreground" />
+              Log out from your account?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to log out? You will need to sign in again to access the portal.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmLogout}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="confirm-logout-button"
+            >
+              Log Out
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

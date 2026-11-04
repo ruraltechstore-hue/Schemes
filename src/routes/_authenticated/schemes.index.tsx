@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
-import { useMatches } from "@/hooks/use-app-data";
+import { useIsAdmin, useMatches } from "@/hooks/use-app-data";
 import { SCHEME_CATEGORIES } from "@/lib/constants";
 import { splitIntoPoints } from "@/lib/point-helpers";
 
@@ -13,6 +13,7 @@ export default AllSchemes;
 
 function AllSchemes() {
   const { all } = useMatches();
+  const { data: isAdmin } = useIsAdmin();
   const [q, setQ] = useState(""); const [cats, setCats] = useState<string[]>([]); const [level, setLevel] = useState<string>("All");
   const toggle = (c: string) => setCats((x) => (x.includes(c) ? x.filter((y) => y !== c) : [...x, c]));
   const list = all.filter(({ scheme: s }) =>
@@ -39,7 +40,7 @@ function AllSchemes() {
         {list.map(({ scheme: s, eligible, percent }) => (
           <Link key={s.id} to={`/schemes/${s.id}`} className="block rounded-lg border bg-card p-5 shadow-card transition hover:border-primary">
             <div className="flex flex-wrap gap-2"><Badge variant="secondary">{s.category}</Badge><Badge variant="outline">{s.level}</Badge>
-              {eligible && <Badge className="bg-success text-success-foreground">You may be eligible · {percent}%</Badge>}</div>
+              {!isAdmin && eligible && <Badge className="bg-success text-success-foreground">You may be eligible · {percent}%</Badge>}</div>
             <h3 className="mt-3 text-lg font-semibold">{s.name}</h3>
             <p className="text-xs text-muted-foreground">{s.ministry}</p>
             <p className="mt-2 line-clamp-2 text-sm text-muted-foreground whitespace-pre-line">{s.description}</p>

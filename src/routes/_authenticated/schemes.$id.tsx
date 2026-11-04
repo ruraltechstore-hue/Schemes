@@ -11,7 +11,7 @@ import { Disclaimer } from "@/components/Disclaimer";
 import { SchemeVideoPlayer } from "@/components/SchemeVideoPlayer";
 import { SchemeRequiredDocuments } from "@/components/SchemeRequiredDocuments";
 import { PointWiseList } from "@/components/PointWiseList";
-import { useApplications, useMatches } from "@/hooks/use-app-data";
+import { useApplications, useIsAdmin, useMatches } from "@/hooks/use-app-data";
 import { getSchemeVideo } from "@/lib/video-helpers";
 import { splitRequiredDocuments } from "@/lib/document-helpers";
 import { APP_STATUSES } from "@/lib/constants";
@@ -22,6 +22,7 @@ function Detail() {
   const { id } = useParams();
   const { all, isLoading } = useMatches();
   const { data: apps } = useApplications();
+  const { data: isAdmin } = useIsAdmin();
   const qc = useQueryClient();
   const m = all.find((x) => x.scheme.id === id);
   const app = apps?.find((a) => a.scheme_id === id);
@@ -113,19 +114,21 @@ function Detail() {
             )}
           </div>
         )}
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          {s.apply_url && s.apply_url.trim() ? (
-            <Button asChild>
-              <a href={s.apply_url} target="_blank" rel="noreferrer">
-                Apply Now <ExternalLink className="h-4 w-4" />
-              </a>
-            </Button>
-          ) : null}
-          <Select value={app?.status ?? ""} onValueChange={track}>
-            <SelectTrigger className="w-52"><SelectValue placeholder="Track this scheme" /></SelectTrigger>
-            <SelectContent>{APP_STATUSES.map((st) => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
+        {!isAdmin && (
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {s.apply_url && s.apply_url.trim() ? (
+              <Button asChild>
+                <a href={s.apply_url} target="_blank" rel="noreferrer">
+                  Apply Now <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
+            ) : null}
+            <Select value={app?.status ?? ""} onValueChange={track}>
+              <SelectTrigger className="w-52"><SelectValue placeholder="Track this scheme" /></SelectTrigger>
+              <SelectContent>{APP_STATUSES.map((st) => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {/* How to Apply — Video Guide Section */}
@@ -133,41 +136,43 @@ function Detail() {
         videoUrl={vid.url}
         videoType={vid.type}
         schemeName={s.name}
-        applyUrl={s.apply_url}
+        applyUrl={!isAdmin ? s.apply_url : undefined}
       />
 
       {/* Match and Documents Details */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-lg border bg-card p-6 shadow-card">
-          <h2 className="text-lg font-semibold">Your match</h2>
-          <div className="mt-2 flex items-center gap-3"><Progress value={m.percent} className="h-2" /><b>{m.percent}%</b></div>
-          <p className={`mt-2 text-sm font-medium ${m.eligible ? "text-success" : "text-destructive"}`}>
-            {m.eligible ? "You may be eligible" : "You may not meet some criteria"}
-          </p>
-          {s.eligibility_text && (
-            <div className="mt-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Eligibility:
-              </p>
-              <PointWiseList
-                text={s.eligibility_text}
-                icon="bullet"
-                inlineIfSingle
-                className="mt-1"
-                itemClassName="text-sm text-muted-foreground"
-              />
+      {!isAdmin && (
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="rounded-lg border bg-card p-6 shadow-card">
+            <h2 className="text-lg font-semibold">Your match</h2>
+            <div className="mt-2 flex items-center gap-3"><Progress value={m.percent} className="h-2" /><b>{m.percent}%</b></div>
+            <p className={`mt-2 text-sm font-medium ${m.eligible ? "text-success" : "text-destructive"}`}>
+              {m.eligible ? "You may be eligible" : "You may not meet some criteria"}
+            </p>
+            {s.eligibility_text && (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Eligibility:
+                </p>
+                <PointWiseList
+                  text={s.eligibility_text}
+                  icon="bullet"
+                  inlineIfSingle
+                  className="mt-1"
+                  itemClassName="text-sm text-muted-foreground"
+                />
+              </div>
+            )}
+            <div className="mt-3 space-y-1.5 text-sm">
+              {m.reasons.map((r) => <div key={r} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />{r}</div>)}
+              {m.missing.map((r) => <div key={r} className="flex gap-2"><AlertCircle className="mt-0.5 h-4 w-4 text-warning" />{r}</div>)}
             </div>
-          )}
-          <div className="mt-3 space-y-1.5 text-sm">
-            {m.reasons.map((r) => <div key={r} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />{r}</div>)}
-            {m.missing.map((r) => <div key={r} className="flex gap-2"><AlertCircle className="mt-0.5 h-4 w-4 text-warning" />{r}</div>)}
           </div>
+          <SchemeRequiredDocuments
+            documents={s.required_documents}
+            missingDocs={m.missingDocs}
+          />
         </div>
-        <SchemeRequiredDocuments
-          documents={s.required_documents}
-          missingDocs={m.missingDocs}
-        />
-      </div>
+      )}
       <Disclaimer />
     </div>
   );
