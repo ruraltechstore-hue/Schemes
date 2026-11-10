@@ -71,8 +71,13 @@ export default function UserSchemeDetail() {
   const qc = useQueryClient();
 
   const tabParam = searchParams.get("tab");
-  const backToResultsUrl = tabParam
-    ? `/agent/users/${userId}?tab=${tabParam}#scheme-eligibility-results`
+  const sortParam = searchParams.get("sort");
+  const backQueryParams = new URLSearchParams();
+  if (tabParam) backQueryParams.set("tab", tabParam);
+  if (sortParam && sortParam !== "highest") backQueryParams.set("sort", sortParam);
+  const backQueryString = backQueryParams.toString();
+  const backToResultsUrl = backQueryString
+    ? `/agent/users/${userId}?${backQueryString}#scheme-eligibility-results`
     : `/agent/users/${userId}`;
 
   const { data: currentUser } = useUser();
@@ -185,28 +190,56 @@ export default function UserSchemeDetail() {
         status: "Verified",
       };
 
+      let insertedId: string | undefined;
       try {
-        const { error: dbError } = await supabase.from("documents").insert(docPayload);
-        if (dbError) {
+        const query = supabase.from("documents").insert(docPayload);
+        const result = typeof (query as any)?.select === "function"
+          ? await (query as any).select("id").maybeSingle()
+          : await query;
+
+        const inserted = result?.data;
+        const dbError = result?.error;
+
+        if (!dbError && inserted?.id) {
+          insertedId = inserted.id;
+        } else if (dbError) {
           // Fallback if scheme_id column is not in remote table
           const fallback = { ...docPayload };
           delete fallback.scheme_id;
-          await supabase.from("documents").insert(fallback);
+          const fallbackQuery = supabase.from("documents").insert(fallback);
+          const fbResult = typeof (fallbackQuery as any)?.select === "function"
+            ? await (fallbackQuery as any).select("id").maybeSingle()
+            : await fallbackQuery;
+          if (fbResult?.data?.id) insertedId = fbResult.data.id;
         }
       } catch {
-        const fallback = { ...docPayload };
-        delete fallback.scheme_id;
-        await supabase.from("documents").insert(fallback);
+        try {
+          const fallback = { ...docPayload };
+          delete fallback.scheme_id;
+          const fallbackQuery = supabase.from("documents").insert(fallback);
+          const fbResult = typeof (fallbackQuery as any)?.select === "function"
+            ? await (fallbackQuery as any).select("id").maybeSingle()
+            : await fallbackQuery;
+          if (fbResult?.data?.id) insertedId = fbResult.data.id;
+        } catch {
+          // ignore insert fallback error
+        }
       }
 
       // 3. Sync to managed_users extra_criteria.documents
       const existingCriteria = (managedUser.extra_criteria as any) || {};
       const existingDocs = existingCriteria.documents || [];
+      const docId = insertedId || crypto.randomUUID();
+
       const remainingDocs = existingDocs.filter(
-        (d: any) => (d.doc_type || "").trim().toLowerCase() !== targetType.trim().toLowerCase()
+        (d: any) =>
+          (d.doc_type || "").trim().toLowerCase() !== targetType.trim().toLowerCase() &&
+          d.file_path !== filePath &&
+          d.id !== docId
       );
+
       const newDocMeta = {
-        id: crypto.randomUUID(),
+        id: docId,
         doc_type: targetType,
         scheme_id: scheme.id,
         file_name: file.name,

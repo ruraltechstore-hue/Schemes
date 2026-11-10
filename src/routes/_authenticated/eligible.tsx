@@ -76,6 +76,7 @@ export default function CheckSchemeEligibility() {
   const [userFilter, setUserFilter] = useState<string>("all");
   const [schemeSearch, setSchemeSearch] = useState("");
   const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(new Set());
+  const [sortOrder, setSortOrder] = useState<"highest" | "lowest">("highest");
 
   // Handle URL query parameters (e.g. ?userId=..., ?userIds=..., ?target=all)
   useEffect(() => {
@@ -532,6 +533,32 @@ export default function CheckSchemeEligibility() {
                   </SelectContent>
                 </Select>
               )}
+
+              <div className="flex items-center gap-1.5 ml-auto">
+                <Label
+                  htmlFor="sort-eligible-matches"
+                  className="text-xs font-medium text-muted-foreground whitespace-nowrap hidden sm:inline"
+                >
+                  Sort by Eligibility Match
+                </Label>
+                <Select
+                  value={sortOrder}
+                  onValueChange={(val: "highest" | "lowest") => setSortOrder(val)}
+                  aria-label="Sort by Eligibility Match"
+                >
+                  <SelectTrigger
+                    id="sort-eligible-matches"
+                    aria-label="Sort by Eligibility Match"
+                    className="h-8 text-xs w-[170px] bg-card"
+                  >
+                    <SelectValue placeholder="Sort by Eligibility Match" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="highest">Highest to Lowest</SelectItem>
+                    <SelectItem value="lowest">Lowest to Highest</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
@@ -550,6 +577,20 @@ export default function CheckSchemeEligibility() {
                   return false;
                 }
                 return true;
+              });
+
+              const sortedMatches = [...filteredMatches].sort((a, b) => {
+                if (statusFilter === "eligible" || (a.status === "eligible" && b.status === "eligible")) {
+                  const aVal = typeof a.percent === "number" && !isNaN(a.percent) ? a.percent : null;
+                  const bVal = typeof b.percent === "number" && !isNaN(b.percent) ? b.percent : null;
+
+                  if (aVal === null && bVal === null) return 0;
+                  if (aVal === null) return 1;
+                  if (bVal === null) return -1;
+
+                  return sortOrder === "lowest" ? aVal - bVal : bVal - aVal;
+                }
+                return 0;
               });
 
               return (
@@ -636,13 +677,14 @@ export default function CheckSchemeEligibility() {
                         </p>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {filteredMatches.map((m) => (
+                          {sortedMatches.map((m) => (
                             <SchemeSummaryCard
                               key={m.scheme.id}
                               matchResult={m}
                               userId={user.id}
                               activeTab={statusFilter !== "all" ? statusFilter : undefined}
                               from="eligible"
+                              sort={sortOrder}
                             />
                           ))}
                         </div>

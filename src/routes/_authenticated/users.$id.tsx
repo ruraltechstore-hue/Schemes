@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -139,11 +139,33 @@ export default function IndividualUserDetails() {
   );
   const [showHistory, setShowHistory] = useState(false);
 
-  // Sync activeTab with URL tab query parameter
+  // Sorting state for eligible schemes: "highest" (default) or "lowest"
+  const sortParam = searchParams.get("sort");
+  const [sortOrder, setSortOrder] = useState<"highest" | "lowest">(() => {
+    if (sortParam === "lowest" || sortParam === "asc") return "lowest";
+    if (sortParam === "highest" || sortParam === "desc") return "highest";
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("eligibility_sort_order");
+        if (stored === "lowest") return "lowest";
+      } catch {
+        // ignore storage errors
+      }
+    }
+    return "highest";
+  });
+
+  // Sync activeTab and sortOrder with URL query parameters
   useEffect(() => {
     const currentTab = searchParams.get("tab");
     if (currentTab && ["eligible", "needs_info", "ineligible"].includes(currentTab)) {
       setActiveTab(currentTab);
+    }
+    const currentSort = searchParams.get("sort");
+    if (currentSort === "lowest" || currentSort === "asc") {
+      setSortOrder("lowest");
+    } else if (currentSort === "highest" || currentSort === "desc") {
+      setSortOrder("highest");
     }
   }, [searchParams]);
 
@@ -153,6 +175,29 @@ export default function IndividualUserDetails() {
       (prev) => {
         const next = new URLSearchParams(prev);
         next.set("tab", val);
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
+  const handleSortChange = (val: "highest" | "lowest") => {
+    setSortOrder(val);
+    if (typeof window !== "undefined") {
+      try {
+        sessionStorage.setItem("eligibility_sort_order", val);
+      } catch {
+        // ignore
+      }
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (val === "lowest") {
+          next.set("sort", val);
+        } else {
+          next.delete("sort");
+        }
         return next;
       },
       { replace: true }
@@ -198,6 +243,48 @@ export default function IndividualUserDetails() {
     }
   }, [managedUser]);
 
+  // Calculate live matches from schemes and uploaded docs
+  const docTypesList = useMemo(
+    () => uploadedDocs.map((d: any) => d.doc_type).filter(Boolean),
+    [uploadedDocs]
+  );
+  const liveMatchResults: MatchResult[] = useMemo(() => {
+    if (!managedUser) return [];
+    return schemes.map((s) => matchScheme(s, managedUser, docTypesList));
+  }, [schemes, managedUser, docTypesList]);
+
+  const eligibleSchemes = useMemo(
+    () => liveMatchResults.filter((m) => m.status === "eligible"),
+    [liveMatchResults]
+  );
+  const ineligibleSchemes = useMemo(
+    () => liveMatchResults.filter((m) => m.status === "ineligible"),
+    [liveMatchResults]
+  );
+  const needsMoreInfoSchemes = useMemo(
+    () => liveMatchResults.filter((m) => m.status === "needs_verification"),
+    [liveMatchResults]
+  );
+
+  // Dynamic sorting of eligible schemes by match percentage
+  const sortedEligibleSchemes = useMemo(() => {
+    return [...eligibleSchemes].sort((a, b) => {
+      const aVal = typeof a.percent === "number" && !isNaN(a.percent) ? a.percent : null;
+      const bVal = typeof b.percent === "number" && !isNaN(b.percent) ? b.percent : null;
+
+      // Handle schemes with unavailable match percentages separately; do not assign them an artificial percentage
+      if (aVal === null && bVal === null) return 0;
+      if (aVal === null) return 1;
+      if (bVal === null) return -1;
+
+      if (sortOrder === "lowest") {
+        return aVal - bVal;
+      }
+      // default: highest to lowest
+      return bVal - aVal;
+    });
+  }, [eligibleSchemes, sortOrder]);
+
   if (userLoading) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center space-y-3">
@@ -223,14 +310,6 @@ export default function IndividualUserDetails() {
       </div>
     );
   }
-
-  // Calculate live matches from schemes and uploaded docs
-  const docTypesList = uploadedDocs.map((d: any) => d.doc_type).filter(Boolean);
-  const liveMatchResults: MatchResult[] = schemes.map((s) => matchScheme(s, managedUser, docTypesList));
-
-  const eligibleSchemes = liveMatchResults.filter((m) => m.status === "eligible");
-  const ineligibleSchemes = liveMatchResults.filter((m) => m.status === "ineligible");
-  const needsMoreInfoSchemes = liveMatchResults.filter((m) => m.status === "needs_verification");
 
   // Document Upload Handler
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -294,21 +373,43 @@ export default function IndividualUserDetails() {
           status: "Verified",
         };
 
+        let insertedDocId: string | undefined;
         try {
-          await supabase.from("documents").insert({
+          const query = supabase.from("documents").insert({
             ...docPayload,
             managed_user_id: effectiveUserId,
             agent_id: currentUser.id,
           });
+          const result = typeof (query as any)?.select === "function"
+            ? await (query as any).select("id").maybeSingle()
+            : await query;
+
+          const inserted = result?.data;
+          const insertError = result?.error;
+
+          if (!insertError && inserted?.id) {
+            insertedDocId = inserted.id;
+          }
         } catch {
-          await supabase.from("documents").insert(docPayload);
+          try {
+            const fallbackQuery = supabase.from("documents").insert(docPayload);
+            const fbResult = typeof (fallbackQuery as any)?.select === "function"
+              ? await (fallbackQuery as any).select("id").maybeSingle()
+              : await fallbackQuery;
+            if (fbResult?.data?.id) {
+              insertedDocId = fbResult.data.id;
+            }
+          } catch {
+            // Ignore insert fallback error
+          }
         }
 
         // 3. Sync to managed_users.extra_criteria.documents
         const existingCriteria = (managedUser.extra_criteria as any) || {};
         const existingDocs = existingCriteria.documents || [];
+        const docId = insertedDocId || crypto.randomUUID();
         const newDocMeta = {
-          id: crypto.randomUUID(),
+          id: docId,
           doc_type: finalDocType,
           file_name: file.name,
           file_path: filePath,
@@ -318,13 +419,18 @@ export default function IndividualUserDetails() {
           agent_id: currentUser.id,
         };
 
+        // Deduplicate existingDocs so same file_path or id is not stored multiple times
+        const remainingDocs = existingDocs.filter(
+          (d: any) => d.file_path !== filePath && d.id !== docId
+        );
+
         if (effectiveUserId) {
           await supabase
             .from("managed_users")
             .update({
               extra_criteria: {
                 ...existingCriteria,
-                documents: [...existingDocs, newDocMeta],
+                documents: [...remainingDocs, newDocMeta],
               },
             })
             .eq("id", effectiveUserId);
@@ -403,7 +509,10 @@ export default function IndividualUserDetails() {
         await supabase.storage.from("documents").remove([docToDelete.file_path]);
       }
 
-      // 2. Remove from documents table if exists
+      // 2. Remove from documents table if exists (by file_path or id)
+      if (docToDelete.file_path) {
+        await supabase.from("documents").delete().eq("file_path", docToDelete.file_path);
+      }
       if (docToDelete.id) {
         await supabase.from("documents").delete().eq("id", docToDelete.id);
       }
@@ -1084,7 +1193,45 @@ export default function IndividualUserDetails() {
 
           {/* TAB 1: Eligible Schemes */}
           <TabsContent value="eligible" className="space-y-4">
-            {eligibleSchemes.length === 0 ? (
+            {/* Sort by Eligibility Match Dropdown Filter Bar */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-1">
+              <div className="text-xs text-muted-foreground font-medium">
+                {eligibleSchemes.length > 0 && (
+                  <span>
+                    Showing {sortedEligibleSchemes.length} eligible {sortedEligibleSchemes.length === 1 ? "scheme" : "schemes"}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto ml-auto" data-testid="sort-filter-container">
+                <Label
+                  htmlFor="sort-eligibility-select"
+                  className="text-xs font-medium text-muted-foreground whitespace-nowrap cursor-pointer"
+                >
+                  Sort by Eligibility Match:
+                </Label>
+                <Select
+                  value={sortOrder}
+                  onValueChange={(val: "highest" | "lowest") => handleSortChange(val)}
+                  aria-label="Sort by Eligibility Match"
+                >
+                  <SelectTrigger
+                    id="sort-eligibility-select"
+                    aria-label="Sort by Eligibility Match"
+                    data-testid="sort-eligibility-trigger"
+                    className="h-8 text-xs w-[180px] bg-card"
+                  >
+                    <SelectValue placeholder="Sort by Eligibility Match" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="highest">Highest to Lowest</SelectItem>
+                    <SelectItem value="lowest">Lowest to Highest</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {sortedEligibleSchemes.length === 0 ? (
               <div className="rounded-xl border bg-card p-10 text-center shadow-card">
                 <CheckCircle2 className="mx-auto h-10 w-10 text-muted-foreground/40" />
                 <h3 className="mt-3 text-base font-semibold">No Eligible Schemes Found</h3>
@@ -1094,12 +1241,13 @@ export default function IndividualUserDetails() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="eligible-schemes-list">
-                {eligibleSchemes.map((res) => (
+                {sortedEligibleSchemes.map((res) => (
                   <SchemeSummaryCard
                     key={res.scheme.id}
                     matchResult={res}
                     userId={effectiveUserId!}
                     activeTab="eligible"
+                    sort={sortOrder}
                   />
                 ))}
               </div>

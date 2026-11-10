@@ -9,6 +9,7 @@ export interface SchemeSummaryCardProps {
   userId: string;
   activeTab?: string;
   from?: string;
+  sort?: string;
 }
 
 export function SchemeSummaryCard({
@@ -16,14 +17,16 @@ export function SchemeSummaryCard({
   userId,
   activeTab = "eligible",
   from,
+  sort,
 }: SchemeSummaryCardProps) {
   const navigate = useNavigate();
   const { scheme, percent, status } = matchResult;
 
-  // Build target URL preserving active tab and origin
+  // Build target URL preserving active tab, sort order and origin
   const queryParams = new URLSearchParams();
   if (activeTab && activeTab !== "eligible") queryParams.set("tab", activeTab);
   if (from) queryParams.set("from", from);
+  if (sort && sort !== "highest") queryParams.set("sort", sort);
   const queryString = queryParams.toString();
   const schemeDetailUrl = `/agent/users/${userId}/schemes/${scheme.id}${queryString ? `?${queryString}` : ""}`;
 

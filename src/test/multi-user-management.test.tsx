@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, renderHook } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import UsersNew from "../routes/_authenticated/users.new";
@@ -628,6 +628,79 @@ describe("Multi-User Beneficiary Management & 3-State Scheme Eligibility", () =>
       );
       expect(mockUpdate).toHaveBeenCalled();
     });
+  });
+
+  it("15. Deduplicates documents so uploaded documents never appear twice under user documents list", async () => {
+    (appDataHooks.useBeneficiaryDocuments as any)?.mockRestore?.();
+    const localQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    // Both documents table and managed_users.extra_criteria have entries for the same file
+    const docTableRecords = [
+      {
+        id: "db-row-id-1",
+        managed_user_id: "user-dup-1",
+        file_path: "agent-1/beneficiaries/user-dup-1/17000_aadhaar.pdf",
+        file_name: "aadhaar.pdf",
+        doc_type: "Aadhaar Card",
+        status: "Verified",
+        created_at: "2026-11-10T05:00:00Z",
+      },
+    ];
+
+    const extraCriteriaDocs = [
+      {
+        id: "client-random-id-2",
+        file_path: "agent-1/beneficiaries/user-dup-1/17000_aadhaar.pdf",
+        file_name: "aadhaar.pdf",
+        doc_type: "Aadhaar Card",
+        status: "Verified",
+        uploaded_at: "2026-11-10T05:00:00Z",
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === "documents") {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: docTableRecords, error: null }),
+          }),
+        };
+      }
+      if (table === "managed_users") {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  extra_criteria: { documents: extraCriteriaDocs },
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnThis(),
+      };
+    });
+
+    const { result } = renderHook(() => appDataHooks.useBeneficiaryDocuments("user-dup-1"), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={localQc}>{children}</QueryClientProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    // Exactly 1 document should be returned, NOT duplicated
+    expect(result.current.data).toHaveLength(1);
+    expect(result.current.data?.[0].file_name).toBe("aadhaar.pdf");
+    expect(result.current.data?.[0].file_path).toBe("agent-1/beneficiaries/user-dup-1/17000_aadhaar.pdf");
+    // Authoritative DB ID is preserved
+    expect(result.current.data?.[0].id).toBe("db-row-id-1");
   });
 });
 

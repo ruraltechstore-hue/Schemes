@@ -200,16 +200,66 @@ export function useBeneficiaryDocuments(userId?: string) {
 
         const extraDocs: any[] = (managedUser?.extra_criteria as any)?.documents || [];
 
-        const map = new Map<string, any>();
-        matchingDocs.forEach((d: any) => map.set(d.id || d.file_path, d));
-        extraDocs.forEach((d: any) => {
-          const key = d.id || d.file_path;
-          if (!map.has(key)) {
-            map.set(key, d);
-          }
-        });
+        const docsMap = new Map<string, any>();
+        const pathToKey = new Map<string, string>();
+        const idToKey = new Map<string, string>();
 
-        return Array.from(map.values());
+        const addOrMerge = (d: any, preferExistingId = true) => {
+          if (!d) return;
+
+          const normPath =
+            d.file_path && typeof d.file_path === "string" && d.file_path.trim()
+              ? d.file_path.trim().toLowerCase().replace(/\\/g, "/").replace(/^\/+/, "")
+              : null;
+          const id =
+            d.id && typeof d.id === "string" && d.id.trim() ? d.id.trim() : null;
+
+          // Find existing key by path or id
+          let existingKey: string | undefined;
+          if (normPath && pathToKey.has(normPath)) {
+            existingKey = pathToKey.get(normPath);
+          } else if (id && idToKey.has(id)) {
+            existingKey = idToKey.get(id);
+          }
+
+          if (existingKey && docsMap.has(existingKey)) {
+            const existing = docsMap.get(existingKey);
+            // Merge fields, keeping the DB id if preferExistingId is true, or keeping existing.id if truthy
+            const merged = {
+              ...d,
+              ...existing,
+              id: preferExistingId && existing.id ? existing.id : d.id || existing.id,
+              file_path: existing.file_path || d.file_path,
+              doc_type: existing.doc_type || d.doc_type,
+              file_name: existing.file_name || d.file_name,
+              mime_type: existing.mime_type || d.mime_type,
+              status: existing.status || d.status || "Verified",
+              created_at: existing.created_at || d.created_at || d.uploaded_at,
+              uploaded_at: existing.uploaded_at || d.uploaded_at || d.created_at,
+              scheme_id: existing.scheme_id || d.scheme_id,
+            };
+            docsMap.set(existingKey, merged);
+            if (normPath) pathToKey.set(normPath, existingKey);
+            if (id) idToKey.set(id, existingKey);
+          } else {
+            const primaryKey = normPath
+              ? `path:${normPath}`
+              : id
+              ? `id:${id}`
+              : `doc:${d.doc_type || ""}_${d.file_name || ""}_${docsMap.size}`;
+            docsMap.set(primaryKey, { ...d });
+            if (normPath) pathToKey.set(normPath, primaryKey);
+            if (id) idToKey.set(id, primaryKey);
+          }
+        };
+
+        // Process matchingDocs (from database table) first so their DB row IDs are authoritative
+        matchingDocs.forEach((d: any) => addOrMerge(d, true));
+
+        // Process extraDocs (from managed_users.extra_criteria.documents)
+        extraDocs.forEach((d: any) => addOrMerge(d, true));
+
+        return Array.from(docsMap.values());
       } catch (err) {
         console.warn("Failed to fetch beneficiary documents:", err);
         return [];
@@ -225,11 +275,14 @@ export function useBeneficiaryCheckHistory(userId?: string) {
     queryFn: async () => {
       if (!userId) return [];
       try {
-        const { data, error } = await supabase
+        const query = supabase
           .from("eligibility_check_history")
           .select("*")
-          .eq("batch_id", `user_${userId}`)
-          .order("created_at", { ascending: false });
+          .eq("batch_id", `user_${userId}`);
+
+        const { data, error } = typeof (query as any)?.order === "function"
+          ? await (query as any).order("created_at", { ascending: false })
+          : await query;
 
         if (error) {
           console.warn("Error fetching check history:", error);
