@@ -1,6 +1,6 @@
 @import "tailwindcss" source(none);
-@source "../src";
 @import "tw-animate-css";
+@source "../src";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -90,10 +90,18 @@
   box-shadow: var(--shadow-card);
 }
 @utility tricolor-bar {
-  background: linear-gradient(90deg, var(--saffron) 0 33.3%, oklch(1 0 0) 33.3% 66.6%, var(--success) 66.6%);
+  background: linear-gradient(
+    90deg,
+    var(--saffron) 0 33.3%,
+    oklch(1 0 0) 33.3% 66.6%,
+    var(--success) 66.6%
+  );
 }
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
   * {
     border-color: var(--color-border);
   }
@@ -102,7 +110,9 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
   }
-  h1, h2, h3 {
+  h1,
+  h2,
+  h3 {
     font-family: var(--font-display);
   }
 }

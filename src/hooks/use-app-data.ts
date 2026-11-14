@@ -35,8 +35,10 @@ export function useIsAdmin() {
 }
 
 export function useDocuments() {
+  const { data: user } = useUser();
   return useQuery({
-    queryKey: ["documents"],
+    queryKey: ["documents", user?.id],
+    enabled: !!user,
     queryFn: async () => {
       const { data, error } = await supabase.from("documents").select("*").order("created_at", { ascending: false });
       if (error) throw error;
@@ -57,8 +59,10 @@ export function useSchemes() {
 }
 
 export function useApplications() {
+  const { data: user } = useUser();
   return useQuery({
-    queryKey: ["applications"],
+    queryKey: ["applications", user?.id],
+    enabled: !!user,
     queryFn: async () => {
       const { data, error } = await supabase.from("applications").select("*, schemes(*)").order("updated_at", { ascending: false });
       if (error) throw error;

@@ -1,25 +1,48 @@
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, AlertCircle, ExternalLink, FileCheck2, FileX2 } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  ExternalLink,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Disclaimer } from "@/components/Disclaimer";
 import { SchemeVideoPlayer } from "@/components/SchemeVideoPlayer";
 import { SchemeRequiredDocuments } from "@/components/SchemeRequiredDocuments";
+import { GuestEligibilityCta } from "@/components/GuestEligibilityCta";
 import { PointWiseList } from "@/components/PointWiseList";
-import { useApplications, useIsAdmin, useMatches } from "@/hooks/use-app-data";
+import {
+  useApplications,
+  useIsAdmin,
+  useMatches,
+  useUser,
+} from "@/hooks/use-app-data";
 import { getSchemeVideo } from "@/lib/video-helpers";
 import { splitRequiredDocuments } from "@/lib/document-helpers";
 import { APP_STATUSES } from "@/lib/constants";
+
+interface SchemeEligibilityExtra {
+  application_process?: string;
+  application_deadline?: string;
+}
 
 export default Detail;
 
 function Detail() {
   const { id } = useParams();
+  const { data: user } = useUser();
   const { all, isLoading } = useMatches();
   const { data: apps } = useApplications();
   const { data: isAdmin } = useIsAdmin();
@@ -28,16 +51,34 @@ function Detail() {
   const app = apps?.find((a) => a.scheme_id === id);
 
   if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
-  if (!m) return <p>Scheme not found. <Link to="/schemes" className="text-primary underline">Back</Link></p>;
+  if (!m) {
+    return (
+      <p>
+        Scheme not found.{" "}
+        <Link to="/schemes" className="text-primary underline">
+          Back
+        </Link>
+      </p>
+    );
+  }
 
   const s = m.scheme;
   const vid = getSchemeVideo(s);
+  const eligibilityExtra: SchemeEligibilityExtra | null =
+    typeof s.eligibility === "object" &&
+      s.eligibility !== null &&
+      !Array.isArray(s.eligibility)
+      ? (s.eligibility as SchemeEligibilityExtra)
+      : null;
 
   const track = async (status: string) => {
-    const { error } = await supabase.from("applications").upsert(
-      { scheme_id: id as string, status, updated_at: new Date().toISOString() },
-      { onConflict: "user_id,scheme_id" },
-    );
+    if (!id) return;
+    const { error } = await supabase
+      .from("applications")
+      .upsert(
+        { scheme_id: id, status, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,scheme_id" },
+      );
     if (error) {
       toast.error(error.message);
       return;
@@ -48,8 +89,12 @@ function Detail() {
 
   return (
     <div className="space-y-6">
-      <Link to="/schemes" className="inline-flex items-center gap-1 text-sm text-primary">
-        <ArrowLeft className="h-4 w-4" />All schemes
+      <Link
+        to="/schemes"
+        className="inline-flex items-center gap-1 text-sm text-primary"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        All schemes
       </Link>
 
       {/* Main Scheme Overview */}
@@ -58,7 +103,9 @@ function Detail() {
           <Badge variant="secondary">{s.category}</Badge>
           <Badge variant="outline">{s.level} Government</Badge>
         </div>
-        <h1 className="mt-3 text-2xl font-bold text-primary md:text-3xl">{s.name}</h1>
+        <h1 className="mt-3 text-2xl font-bold text-primary md:text-3xl">
+          {s.name}
+        </h1>
         <p className="text-sm text-muted-foreground">{s.ministry}</p>
         {s.description && (
           <div className="mt-4">
@@ -68,12 +115,7 @@ function Detail() {
         {s.benefits && (
           <div className="mt-4 rounded-md bg-accent p-4">
             <b>Benefits:</b>
-            <PointWiseList
-              text={s.benefits}
-              icon="check"
-              inlineIfSingle
-              className="mt-1"
-            />
+            <PointWiseList text={s.benefits} icon="check" inlineIfSingle className="mt-1" />
           </div>
         )}
         {s.eligibility_text && (
@@ -97,23 +139,26 @@ function Detail() {
             />
           </div>
         )}
-        {((s.eligibility as any)?.application_process || (s.eligibility as any)?.application_deadline) && (
-          <div className="mt-4 text-sm">
-            {(s.eligibility as any)?.application_process && (
-              <div className="mb-2">
-                <b>Application Process:</b>
-                <PointWiseList
-                  text={(s.eligibility as any).application_process}
-                  inlineIfSingle
-                  className="mt-1"
-                />
-              </div>
-            )}
-            {(s.eligibility as any)?.application_deadline && (
-              <p><b>Deadline:</b> {(s.eligibility as any).application_deadline}</p>
-            )}
-          </div>
-        )}
+        {(eligibilityExtra?.application_process ||
+          eligibilityExtra?.application_deadline) && (
+            <div className="mt-4 text-sm">
+              {eligibilityExtra.application_process && (
+                <div className="mb-2">
+                  <b>Application Process:</b>
+                  <PointWiseList
+                    text={eligibilityExtra.application_process}
+                    inlineIfSingle
+                    className="mt-1"
+                  />
+                </div>
+              )}
+              {eligibilityExtra.application_deadline && (
+                <p>
+                  <b>Deadline:</b> {eligibilityExtra.application_deadline}
+                </p>
+              )}
+            </div>
+          )}
         {!isAdmin && (
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {s.apply_url && s.apply_url.trim() ? (
@@ -123,10 +168,20 @@ function Detail() {
                 </a>
               </Button>
             ) : null}
-            <Select value={app?.status ?? ""} onValueChange={track}>
-              <SelectTrigger className="w-52"><SelectValue placeholder="Track this scheme" /></SelectTrigger>
-              <SelectContent>{APP_STATUSES.map((st) => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent>
-            </Select>
+            {user && (
+              <Select value={app?.status ?? ""} onValueChange={track}>
+                <SelectTrigger className="w-52">
+                  <SelectValue placeholder="Track this scheme" />
+                </SelectTrigger>
+                <SelectContent>
+                  {APP_STATUSES.map((st) => (
+                    <SelectItem key={st} value={st}>
+                      {st}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         )}
       </div>
@@ -136,17 +191,27 @@ function Detail() {
         videoUrl={vid.url}
         videoType={vid.type}
         schemeName={s.name}
-        applyUrl={!isAdmin ? s.apply_url : undefined}
+        {...(!isAdmin && s.apply_url ? { applyUrl: s.apply_url } : {})}
       />
 
+      {/* Public visitor CTA */}
+      {!user && <GuestEligibilityCta schemeName={s.name} />}
+
       {/* Match and Documents Details */}
-      {!isAdmin && (
+      {user && !isAdmin && (
         <div className="grid gap-6 md:grid-cols-2">
           <div className="rounded-lg border bg-card p-6 shadow-card">
             <h2 className="text-lg font-semibold">Your match</h2>
-            <div className="mt-2 flex items-center gap-3"><Progress value={m.percent} className="h-2" /><b>{m.percent}%</b></div>
-            <p className={`mt-2 text-sm font-medium ${m.eligible ? "text-success" : "text-destructive"}`}>
-              {m.eligible ? "You may be eligible" : "You may not meet some criteria"}
+            <div className="mt-2 flex items-center gap-3">
+              <Progress value={m.percent} className="h-2" />
+              <b>{m.percent}%</b>
+            </div>
+            <p
+              className={`mt-2 text-sm font-medium ${m.eligible ? "text-success" : "text-destructive"}`}
+            >
+              {m.eligible
+                ? "You may be eligible"
+                : "You may not meet some criteria"}
             </p>
             {s.eligibility_text && (
               <div className="mt-4">
@@ -163,14 +228,21 @@ function Detail() {
               </div>
             )}
             <div className="mt-3 space-y-1.5 text-sm">
-              {m.reasons.map((r) => <div key={r} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />{r}</div>)}
-              {m.missing.map((r) => <div key={r} className="flex gap-2"><AlertCircle className="mt-0.5 h-4 w-4 text-warning" />{r}</div>)}
+              {m.reasons.map((r) => (
+                <div key={r} className="flex gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />
+                  {r}
+                </div>
+              ))}
+              {m.missing.map((r) => (
+                <div key={r} className="flex gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 text-warning" />
+                  {r}
+                </div>
+              ))}
             </div>
           </div>
-          <SchemeRequiredDocuments
-            documents={s.required_documents}
-            missingDocs={m.missingDocs}
-          />
+          <SchemeRequiredDocuments documents={s.required_documents} missingDocs={m.missingDocs} />
         </div>
       )}
       <Disclaimer />

@@ -21,6 +21,7 @@ import UsersNew from "./routes/_authenticated/users.new";
 import UserDetails from "./routes/_authenticated/users.$id";
 import UserSchemeDetail from "./routes/_authenticated/users.$id.schemes.$schemeId";
 import Reports from "./routes/_authenticated/reports";
+import { SchemePublicOrAuthLayout } from "./components/SchemePublicOrAuthLayout";
 
 export default function App() {
   return (
@@ -31,7 +32,12 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        
+
+        <Route element={<SchemePublicOrAuthLayout />}>
+          <Route path="/schemes" element={<AllSchemes />} />
+          <Route path="/schemes/:id" element={<SchemeDetail />} />
+        </Route>
+
         <Route element={<AuthenticatedLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/admin" element={<Admin />} />
@@ -39,8 +45,6 @@ export default function App() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/eligible" element={<EligibleSchemes />} />
-          <Route path="/schemes" element={<AllSchemes />} />
-          <Route path="/schemes/:id" element={<SchemeDetail />} />
           <Route path="/applications" element={<Applications />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/users" element={<UsersIndex />} />

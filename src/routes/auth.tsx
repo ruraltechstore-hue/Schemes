@@ -1,5 +1,6 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Clock } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -12,9 +13,36 @@ export default Login;
 
 function Login() {
   const nav = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const [expiredMsg, setExpiredMsg] = useState<string | null>(() => {
+    if (location.state?.message) return location.state.message as string;
+    try {
+      const stored = sessionStorage.getItem("inactivity_logout_message");
+      if (stored) {
+        sessionStorage.removeItem("inactivity_logout_message");
+        return stored;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (location.state?.message && location.state.message !== expiredMsg) {
+      setExpiredMsg(location.state.message as string);
+    }
+  }, [location.state?.message, expiredMsg]);
+
+  useEffect(() => {
+    if (expiredMsg) {
+      toast.warning(expiredMsg);
+    }
+  }, [expiredMsg]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,9 +68,16 @@ function Login() {
         if (error.message.toLowerCase().includes("invalid login credentials")) {
           toast.error("Invalid email or password. Please verify your credentials and try again.");
         } else if (error.message.toLowerCase().includes("email not confirmed")) {
-          toast.error("Your email is not verified yet. Please complete registration OTP verification.");
-        } else if (error.message.toLowerCase().includes("fetch") || error.message.toLowerCase().includes("network")) {
-          toast.error("Network error. Unable to connect to authentication service. Please check your connection.");
+          toast.error(
+            "Your email is not verified yet. Please complete registration OTP verification.",
+          );
+        } else if (
+          error.message.toLowerCase().includes("fetch") ||
+          error.message.toLowerCase().includes("network")
+        ) {
+          toast.error(
+            "Network error. Unable to connect to authentication service. Please check your connection.",
+          );
         } else {
           toast.error(error.message);
         }
@@ -76,7 +111,9 @@ function Login() {
             return;
           }
           if (agentData.status === "pending") {
-            toast.info("Your agent registration has been submitted. Please wait for admin approval.");
+            toast.info(
+              "Your agent registration has been submitted. Please wait for admin approval.",
+            );
             nav("/dashboard");
             return;
           }
@@ -98,14 +135,26 @@ function Login() {
         toast.success("Welcome back!");
         nav("/dashboard");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setBusy(false);
-      toast.error(err?.message || "An unexpected error occurred. Please try again.");
+      const errorMessage =
+        err instanceof Error ? err.message : "An unexpected error occurred. Please try again.";
+      toast.error(errorMessage);
     }
   };
 
   return (
     <AuthLayout title="Agent Login" subtitle="Access your scheme dashboard & beneficiary portal">
+      {expiredMsg && (
+        <div
+          role="alert"
+          data-testid="session-expired-alert"
+          className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-sm text-amber-900 shadow-sm"
+        >
+          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="flex-1 font-medium">{expiredMsg}</div>
+        </div>
+      )}
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label htmlFor="login-email">Email</Label>

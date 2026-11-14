@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -41,6 +41,8 @@ import {
 import { useUser, useProfile, useIsAdmin } from "@/hooks/use-app-data";
 import { useAgentProfile } from "@/hooks/use-agent-data";
 import { getInitials } from "@/lib/profile-helpers";
+import { useInactivityTimeout } from "@/hooks/use-inactivity-timeout";
+import { SessionTimeoutWarningDialog } from "@/components/SessionTimeoutWarningDialog";
 
 export default Layout;
 
@@ -67,6 +69,12 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
 
   const confirmLogout = async () => {
+    try {
+      localStorage.setItem("scheme_compass_agent_logout_event", String(Date.now()));
+      localStorage.removeItem("scheme_compass_agent_last_activity");
+    } catch {
+      // ignore
+    }
     await qc.cancelQueries();
     qc.clear();
     await supabase.auth.signOut();
@@ -132,7 +140,11 @@ function Layout() {
   const { data: user, isLoading: userLoading } = useUser();
   const { data: profile } = useProfile();
   const { data: isAdmin, isLoading: adminLoading } = useIsAdmin();
-  const { data: agentProfile, isLoading: agentLoading, refetch: refetchAgent } = useAgentProfile(user?.id);
+  const {
+    data: agentProfile,
+    isLoading: agentLoading,
+    refetch: refetchAgent,
+  } = useAgentProfile(user?.id);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -142,13 +154,52 @@ function Layout() {
   }, [user, userLoading, navigate]);
 
   const logout = async () => {
+    try {
+      localStorage.setItem("scheme_compass_agent_logout_event", String(Date.now()));
+      localStorage.removeItem("scheme_compass_agent_last_activity");
+    } catch {
+      // ignore
+    }
     await qc.cancelQueries();
     qc.clear();
     await supabase.auth.signOut();
     navigate("/auth", { replace: true });
   };
 
-  if (userLoading || adminLoading || (!isAdmin && agentLoading && typeof supabase?.from === "function")) {
+  const isApprovedAgent = !!user && !isAdmin && agentProfile?.status === "approved";
+
+  const handleInactivityLogout = useCallback(async () => {
+    try {
+      sessionStorage.setItem(
+        "inactivity_logout_message",
+        "Your session has expired due to 10 minutes of inactivity. Please log in again.",
+      );
+    } catch {
+      // ignore
+    }
+
+    await qc.cancelQueries();
+    qc.clear();
+    await supabase.auth.signOut();
+    navigate("/auth", {
+      replace: true,
+      state: {
+        sessionExpired: true,
+        message: "Your session has expired due to 10 minutes of inactivity. Please log in again.",
+      },
+    });
+  }, [qc, navigate]);
+
+  const { showWarning, stayLoggedIn } = useInactivityTimeout({
+    enabled: isApprovedAgent,
+    onTimeout: handleInactivityLogout,
+  });
+
+  if (
+    userLoading ||
+    adminLoading ||
+    (!isAdmin && agentLoading && typeof supabase?.from === "function")
+  ) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
@@ -180,24 +231,19 @@ function Layout() {
             <div>
               <h2 className="text-2xl font-bold text-foreground">Email Verification Required</h2>
               <p className="mt-2 text-sm text-blue-900 bg-blue-50 rounded-lg p-3 border border-blue-200 font-medium">
-                Your email has not been verified. Please verify your email with the 6-digit OTP code to complete registration.
+                Your email has not been verified. Please verify your email with the 6-digit OTP code
+                to complete registration.
               </p>
             </div>
             <p className="text-xs text-muted-foreground">
-              Admin approval requests are only generated after successful email OTP verification. Once verified, your application will be submitted to the platform administrator.
+              Admin approval requests are only generated after successful email OTP verification.
+              Once verified, your application will be submitted to the platform administrator.
             </p>
             <div className="flex flex-col gap-2.5 pt-2">
-              <Button
-                className="w-full"
-                asChild
-              >
+              <Button className="w-full" asChild>
                 <Link to="/register">Complete Email Verification</Link>
               </Button>
-              <Button
-                variant="ghost"
-                className="w-full text-muted-foreground"
-                onClick={logout}
-              >
+              <Button variant="ghost" className="w-full text-muted-foreground" onClick={logout}>
                 Sign Out
               </Button>
             </div>
@@ -223,11 +269,15 @@ function Layout() {
             <div className="rounded-xl border bg-muted/30 p-4 text-left text-xs space-y-2">
               <div className="flex justify-between border-b pb-1.5">
                 <span className="text-muted-foreground">Agent Name:</span>
-                <span className="font-semibold">{agentProfile?.full_name || profile?.full_name || user.email}</span>
+                <span className="font-semibold">
+                  {agentProfile?.full_name || profile?.full_name || user.email}
+                </span>
               </div>
               <div className="flex justify-between border-b pb-1.5">
                 <span className="text-muted-foreground">Agency:</span>
-                <span className="font-semibold">{agentProfile?.agency_name || "Agent Partner"}</span>
+                <span className="font-semibold">
+                  {agentProfile?.agency_name || "Agent Partner"}
+                </span>
               </div>
               <div className="flex justify-between border-b pb-1.5">
                 <span className="text-muted-foreground">Email:</span>
@@ -241,22 +291,15 @@ function Layout() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              Our administrative team is reviewing your agent profile. Once approved, you will have immediate access to the Agent Dashboard and beneficiary management.
+              Our administrative team is reviewing your agent profile. Once approved, you will have
+              immediate access to the Agent Dashboard and beneficiary management.
             </p>
             <div className="flex flex-col gap-2.5 pt-2">
-              <Button
-                variant="outline"
-                className="w-full gap-2"
-                onClick={() => refetchAgent()}
-              >
+              <Button variant="outline" className="w-full gap-2" onClick={() => refetchAgent()}>
                 <RotateCw className="h-4 w-4" />
                 Refresh Approval Status
               </Button>
-              <Button
-                variant="ghost"
-                className="w-full text-muted-foreground"
-                onClick={logout}
-              >
+              <Button variant="ghost" className="w-full text-muted-foreground" onClick={logout}>
                 <LogOut className="h-4 w-4 mr-2" />
                 Logout
               </Button>
@@ -287,7 +330,8 @@ function Layout() {
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Please contact platform administration if you believe this is in error or wish to re-apply.
+              Please contact platform administration if you believe this is in error or wish to
+              re-apply.
             </p>
             <Button variant="default" className="w-full" onClick={logout}>
               <LogOut className="h-4 w-4 mr-2" />
@@ -319,7 +363,8 @@ function Layout() {
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Access to beneficiary records and scheme check services is suspended. Please contact the administrator to resolve account compliance.
+              Access to beneficiary records and scheme check services is suspended. Please contact
+              the administrator to resolve account compliance.
             </p>
             <Button variant="default" className="w-full" onClick={logout}>
               <LogOut className="h-4 w-4 mr-2" />
@@ -340,7 +385,10 @@ function Layout() {
     "Agent";
 
   const agencyName = agentProfile?.agency_name;
-  const avatarUrl = user?.user_metadata?.["avatar_url"] || (profile as any)?.avatar_url || null;
+  const avatarUrl =
+    user?.user_metadata?.["avatar_url"] ||
+    (profile as { avatar_url?: string } | null)?.avatar_url ||
+    null;
   const initials = getInitials(displayName, user?.email);
 
   return (
@@ -364,7 +412,9 @@ function Layout() {
           <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground">
             <span className="font-semibold text-foreground">Scheme Compass</span>
             <span>·</span>
-            <span>{isAdmin ? "Admin Portal" : `Agent Portal ${agencyName ? `(${agencyName})` : ""}`}</span>
+            <span>
+              {isAdmin ? "Admin Portal" : `Agent Portal ${agencyName ? `(${agencyName})` : ""}`}
+            </span>
           </div>
           <Link
             to={isAdmin ? "/admin/profile" : "/profile"}
@@ -373,7 +423,9 @@ function Layout() {
             data-testid="header-profile-link"
           >
             <Avatar className="h-8 w-8 border border-border group-hover:ring-2 group-hover:ring-primary/20 transition-all">
-              {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />}
+              {avatarUrl && (
+                <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
+              )}
               <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
                 {initials}
               </AvatarFallback>
@@ -392,6 +444,7 @@ function Layout() {
           <Outlet />
         </main>
       </div>
+      <SessionTimeoutWarningDialog open={showWarning} onStayLoggedIn={stayLoggedIn} />
     </div>
   );
 }
