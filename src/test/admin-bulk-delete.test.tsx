@@ -22,8 +22,22 @@ vi.mock("@/integrations/supabase/client", () => ({
           delete: deleteMock,
         };
       }
-      return {};
+      return {
+        delete: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ error: null }),
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+        update: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ error: null }),
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      };
     }),
+    channel: vi.fn(() => ({
+      on: vi.fn().mockReturnThis(),
+      subscribe: vi.fn().mockReturnThis(),
+    })),
+    removeChannel: vi.fn(),
   },
 }));
 
@@ -97,7 +111,7 @@ function renderAdmin() {
   return render(
     <QueryClientProvider client={qc}>
       <Admin />
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -191,7 +205,9 @@ describe("Admin Bulk Delete Schemes Functionality", () => {
     // Dialog should be open
     await waitFor(() => {
       expect(
-        screen.getByText(/Are you sure you want to delete 2 selected schemes\? This action cannot be undone\./i)
+        screen.getByText(
+          /Are you sure you want to delete 2 selected schemes\? This action cannot be undone\./i,
+        ),
       ).toBeInTheDocument();
     });
 
@@ -201,7 +217,7 @@ describe("Admin Bulk Delete Schemes Functionality", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByText(/Are you sure you want to delete 2 selected schemes\?/i)
+        screen.queryByText(/Are you sure you want to delete 2 selected schemes\?/i),
       ).not.toBeInTheDocument();
     });
     // Deletion was not performed
@@ -261,7 +277,7 @@ describe("Admin Bulk Delete Schemes Functionality", () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        "Failed to delete schemes: Permission denied or network failure"
+        "Failed to delete schemes: Permission denied or network failure",
       );
       expect(toast.success).not.toHaveBeenCalled();
     });
@@ -330,4 +346,122 @@ describe("Admin Bulk Delete Schemes Functionality", () => {
       expect(toast.success).toHaveBeenCalledWith("Successfully deleted 60 schemes");
     });
   }, 15000);
+
+  it("accurately displays the number of schemes uploaded across the admin dashboard", () => {
+    renderAdmin();
+
+    // 1. Header subtitle
+    expect(screen.getByText("3 schemes uploaded in database")).toBeInTheDocument();
+
+    // 2. Tab button title
+    expect(screen.getByRole("button", { name: /Schemes Management \(3\)/i })).toBeInTheDocument();
+
+    // 3. Stat cards
+    const statsContainer = screen.getByTestId("admin-schemes-stats");
+    expect(statsContainer).toBeInTheDocument();
+    expect(screen.getByTestId("total-schemes-uploaded-count")).toHaveTextContent("3");
+    expect(screen.getByText("Central Schemes")).toBeInTheDocument();
+    expect(screen.getByText("State Schemes")).toBeInTheDocument();
+    expect(screen.getByText("Scheme Categories")).toBeInTheDocument();
+
+    // 4. Pagination summary
+    expect(screen.getByTestId("pagination-summary")).toHaveTextContent(
+      "Showing 1–3 of 3 schemes (Total schemes uploaded: 3)",
+    );
+  });
+
+  it("provides 'Delete All Schemes' in header action bar and prompts confirmation dialog", async () => {
+    renderAdmin();
+
+    const deleteAllBtn = screen.getByTestId("header-delete-all-button");
+    expect(deleteAllBtn).toBeInTheDocument();
+    expect(deleteAllBtn).toHaveTextContent("Delete All Schemes");
+
+    // Click Delete All Schemes
+    fireEvent.click(deleteAllBtn);
+
+    // Verify confirmation dialog opens with warning message and scheme count
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-all-dialog-content")).toBeInTheDocument();
+      expect(screen.getByText(/Are you sure you want to permanently delete/i)).toBeInTheDocument();
+      expect(screen.getByTestId("confirm-delete-all-button")).toBeInTheDocument();
+      expect(screen.getByTestId("confirm-delete-all-button")).toHaveTextContent(
+        "Delete All 3 Schemes",
+      );
+    });
+
+    // Clicking cancel closes dialog without executing deletion
+    const cancelBtn = screen.getByRole("button", { name: /cancel/i });
+    fireEvent.click(cancelBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("delete-all-dialog-content")).not.toBeInTheDocument();
+    });
+    expect(deleteMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes all schemes when confirmed from the 'Delete All Schemes' dialog", async () => {
+    const { toast } = await import("sonner");
+    renderAdmin();
+
+    const deleteAllBtn = screen.getByTestId("header-delete-all-button");
+    fireEvent.click(deleteAllBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-delete-all-button")).toBeInTheDocument();
+    });
+
+    const confirmBtn = screen.getByTestId("confirm-delete-all-button");
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(supabase.from).toHaveBeenCalledWith("schemes");
+      expect(deleteMock).toHaveBeenCalled();
+      expect(inMock).toHaveBeenCalledWith(
+        "id",
+        expect.arrayContaining(["scheme-1", "scheme-2", "scheme-3"]),
+      );
+      expect(toast.success).toHaveBeenCalledWith("Successfully deleted all 3 schemes");
+    });
+  });
+
+  it("provides 'Delete All Schemes' option in the bulk action bar when items are selected", async () => {
+    renderAdmin();
+
+    const cb1 = screen.getByTestId("select-scheme-scheme-1");
+    fireEvent.click(cb1);
+
+    const bulkDeleteAllBtn = screen.getByTestId("bulk-delete-all-button");
+    expect(bulkDeleteAllBtn).toBeInTheDocument();
+    expect(bulkDeleteAllBtn).toHaveTextContent("Delete All Schemes (3)");
+
+    fireEvent.click(bulkDeleteAllBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-all-dialog-content")).toBeInTheDocument();
+      expect(screen.getByTestId("confirm-delete-all-button")).toBeInTheDocument();
+    });
+  });
+
+  it("shows only delete selected schemes options in the confirmation popup when clicking delete selected", async () => {
+    renderAdmin();
+
+    const cb1 = screen.getByTestId("select-scheme-scheme-1");
+    fireEvent.click(cb1);
+
+    const bulkDeleteBtn = screen.getByTestId("bulk-delete-button");
+    fireEvent.click(bulkDeleteBtn);
+
+    await waitFor(() => {
+      // Confirms dialog opens with Delete Selected Schemes title and button
+      expect(screen.getByText("Delete Selected Schemes")).toBeInTheDocument();
+      expect(screen.getByTestId("confirm-bulk-delete-button")).toBeInTheDocument();
+      expect(screen.getByTestId("confirm-bulk-delete-button")).toHaveTextContent(
+        "Delete 1 Selected Scheme",
+      );
+      // Ensures "Delete All Schemes Instead" is NOT shown in this popup
+      expect(screen.queryByTestId("dialog-delete-all-option-button")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Delete All Schemes Instead/i)).not.toBeInTheDocument();
+    });
+  });
 });

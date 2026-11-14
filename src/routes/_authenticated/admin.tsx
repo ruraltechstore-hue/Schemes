@@ -1,7 +1,26 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, ShieldAlert, Video, Loader2, RotateCcw, AlertCircle, X, Search, User, Users, Library, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Pencil,
+  Plus,
+  Trash2,
+  ShieldAlert,
+  Video,
+  Loader2,
+  RotateCcw,
+  AlertCircle,
+  X,
+  Search,
+  User,
+  Users,
+  Library,
+  ChevronLeft,
+  ChevronRight,
+  Building2,
+  CheckCircle2,
+  Sparkles,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { BulkUpload } from "@/components/BulkUpload";
 import { AdminVideoUploader } from "@/components/AdminVideoUploader";
@@ -24,13 +43,26 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
 import { useIsAdmin, useSchemes } from "@/hooks/use-app-data";
 import { useAllAgentProfiles } from "@/hooks/use-agent-data";
 import type { Eligibility, Scheme } from "@/lib/matching";
 import { getSchemeVideo, isYouTubeUrl } from "@/lib/video-helpers";
-import { CASTE_CATEGORIES, DOC_TYPES, GENDERS, OCCUPATIONS, SCHEME_CATEGORIES, STATES } from "@/lib/constants";
+import {
+  CASTE_CATEGORIES,
+  DOC_TYPES,
+  GENDERS,
+  OCCUPATIONS,
+  SCHEME_CATEGORIES,
+  STATES,
+} from "@/lib/constants";
 import { splitRequiredDocuments } from "@/lib/document-helpers";
 import { PointWiseList } from "@/components/PointWiseList";
 import { splitIntoPoints } from "@/lib/point-helpers";
@@ -60,6 +92,19 @@ const empty: Form = {
   video_type: null,
 };
 
+function getErrorMessage(err: unknown, fallback = "Unknown error"): string {
+  if (!err) return fallback;
+  if (err instanceof Error) return err.message;
+  if (
+    typeof err === "object" &&
+    "message" in err &&
+    typeof (err as { message: unknown }).message === "string"
+  ) {
+    return (err as { message: string }).message;
+  }
+  return String(err);
+}
+
 function Chips({
   options,
   value,
@@ -78,7 +123,9 @@ function Chips({
           key={o}
           onClick={() => onChange(v.includes(o) ? v.filter((x) => x !== o) : [...v, o])}
           className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-            v.includes(o) ? "border-primary bg-primary text-primary-foreground font-medium" : "bg-card hover:bg-muted"
+            v.includes(o)
+              ? "border-primary bg-primary text-primary-foreground font-medium"
+              : "bg-card hover:bg-muted"
           }`}
         >
           {o}
@@ -106,6 +153,26 @@ function Admin() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isDeleteAllDialogOpen, setIsDeleteAllDialogOpen] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  // Realtime synchronization for schemes table changes
+  useEffect(() => {
+    if (!supabase?.channel) return;
+    const channel = supabase
+      .channel("admin-schemes-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "schemes" }, () => {
+        qc.invalidateQueries({ queryKey: ["schemes"] });
+        qc.refetchQueries({ queryKey: ["schemes"] });
+      })
+      .subscribe();
+
+    return () => {
+      if (channel && supabase.removeChannel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [qc]);
 
   // Search and filter state
   const [searchTerm, setSearchTerm] = useState("");
@@ -126,16 +193,6 @@ function Admin() {
   const { data: allAgents = [] } = useAllAgentProfiles();
   const pendingAgentCount = allAgents.filter((a) => a.status === "pending").length;
 
-  if (isLoading) return null;
-  if (!isAdmin) {
-    return (
-      <div className="rounded-lg border bg-card p-10 text-center">
-        <ShieldAlert className="mx-auto h-10 w-10 text-destructive" />
-        <p className="mt-2 font-medium">Admin access required.</p>
-      </div>
-    );
-  }
-
   const e = f?.eligibility ?? {};
 
   const setE = (k: keyof Eligibility, v: unknown) => {
@@ -144,7 +201,10 @@ function Admin() {
         ...f,
         eligibility: {
           ...f.eligibility,
-          [k]: v === "" || v === undefined || (Array.isArray(v) && !v.length) || v === false ? undefined : v,
+          [k]:
+            v === "" || v === undefined || (Array.isArray(v) && !v.length) || v === false
+              ? undefined
+              : v,
         },
       });
     }
@@ -172,10 +232,21 @@ function Admin() {
 
       const vid = getSchemeVideo(data);
       const rawElig =
-        typeof data.eligibility === "string" ? JSON.parse(data.eligibility) : data.eligibility || {};
+        typeof data.eligibility === "string"
+          ? JSON.parse(data.eligibility)
+          : data.eligibility || {};
 
-      const appProcess = rawElig.application_process || (data as any).application_process || "";
-      const appDeadline = rawElig.application_deadline || (data as any).application_deadline || "";
+      const dataRecord = data as Record<string, unknown>;
+      const appProcess =
+        rawElig.application_process ||
+        (typeof dataRecord["application_process"] === "string"
+          ? (dataRecord["application_process"] as string)
+          : "");
+      const appDeadline =
+        rawElig.application_deadline ||
+        (typeof dataRecord["application_deadline"] === "string"
+          ? (dataRecord["application_deadline"] as string)
+          : "");
 
       setF({
         id: data.id,
@@ -199,10 +270,11 @@ function Admin() {
           video_type: vid.type || undefined,
         },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to load scheme details";
       console.error("Failed to load scheme:", err);
-      setFetchError(err.message || "Failed to load scheme details");
-      toast.error("Failed to load scheme: " + (err.message || "Unknown error"));
+      setFetchError(message);
+      toast.error("Failed to load scheme: " + message);
     } finally {
       setIsLoadingScheme(false);
     }
@@ -250,7 +322,7 @@ function Admin() {
     const elig = JSON.parse(JSON.stringify(row.eligibility));
 
     // Clean up undefined / empty values in eligibility JSON
-    const cleanedElig: any = {};
+    const cleanedElig: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(elig)) {
       if (v !== undefined && v !== null && v !== "" && (!Array.isArray(v) || v.length > 0)) {
         cleanedElig[k] = v;
@@ -258,17 +330,18 @@ function Admin() {
     }
 
     if (f.application_video_url) {
-      cleanedElig.application_video_url = f.application_video_url;
-      cleanedElig.video_type = f.video_type || (isYouTubeUrl(f.application_video_url) ? "youtube" : "uploaded");
+      cleanedElig["application_video_url"] = f.application_video_url;
+      cleanedElig["video_type"] =
+        f.video_type || (isYouTubeUrl(f.application_video_url) ? "youtube" : "uploaded");
     }
     if (f.eligibility?.application_process) {
-      cleanedElig.application_process = f.eligibility.application_process;
+      cleanedElig["application_process"] = f.eligibility.application_process;
     }
     if (f.eligibility?.application_deadline) {
-      cleanedElig.application_deadline = f.eligibility.application_deadline;
+      cleanedElig["application_deadline"] = f.eligibility.application_deadline;
     }
 
-    const rowToSave: any = {
+    const rowToSave: Record<string, unknown> = {
       ...row,
       apply_url: f.apply_url?.trim() || "",
       state: f.level === "State" ? f.state || null : null,
@@ -279,25 +352,33 @@ function Admin() {
 
     try {
       let res = id
-        ? await supabase.from("schemes").update(rowToSave).eq("id", id)
-        : await supabase.from("schemes").insert(rowToSave);
+        ? await supabase
+            .from("schemes")
+            .update(rowToSave as never)
+            .eq("id", id)
+        : await supabase.from("schemes").insert(rowToSave as never);
 
       // Fallback if dedicated video columns are not yet cached by PostgREST
       if (res.error && res.error.message?.includes("application_video_url")) {
         const { application_video_url, video_type, ...fallbackRow } = rowToSave;
         res = id
-          ? await supabase.from("schemes").update(fallbackRow).eq("id", id)
-          : await supabase.from("schemes").insert(fallbackRow);
+          ? await supabase
+              .from("schemes")
+              .update(fallbackRow as never)
+              .eq("id", id)
+          : await supabase.from("schemes").insert(fallbackRow as never);
       }
 
       if (res.error) throw res.error;
 
       toast.success(id ? "Scheme updated successfully" : "Scheme added successfully");
       closeDialog();
-      qc.invalidateQueries({ queryKey: ["schemes"] });
-    } catch (err: any) {
+      await qc.invalidateQueries({ queryKey: ["schemes"] });
+      await qc.refetchQueries({ queryKey: ["schemes"] });
+    } catch (err: unknown) {
       console.error("Save scheme error:", err);
-      toast.error("Failed to save scheme: " + (err.message || "Unknown error"));
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Failed to save scheme: " + message);
     } finally {
       setIsSaving(false);
     }
@@ -310,8 +391,7 @@ function Admin() {
       `${s.name} ${s.description} ${s.ministry} ${s.benefits}`
         .toLowerCase()
         .includes(searchTerm.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "All" || s.category === selectedCategory;
+    const matchesCategory = selectedCategory === "All" || s.category === selectedCategory;
     const matchesLevel = selectedLevel === "All" || s.level === selectedLevel;
     return matchesSearch && matchesCategory && matchesLevel;
   });
@@ -321,6 +401,10 @@ function Admin() {
     setCurrentPage(1);
   }, [searchTerm, selectedCategory, selectedLevel]);
 
+  const totalSchemesUploaded = schemes?.length ?? 0;
+  const centralSchemesCount = (schemes ?? []).filter((s) => s.level === "Central").length;
+  const stateSchemesCount = (schemes ?? []).filter((s) => s.level === "State").length;
+  const categoriesCount = new Set((schemes ?? []).map((s) => s.category)).size;
   const totalSchemes = displayedSchemes.length;
   const totalPages = Math.max(1, Math.ceil(totalSchemes / pageSize));
 
@@ -336,8 +420,7 @@ function Admin() {
   const paginatedSchemes = displayedSchemes.slice(startIndex, endIndex);
 
   const allDisplayedSelected =
-    displayedSchemes.length > 0 &&
-    displayedSchemes.every((s) => selectedIds.has(s.id));
+    displayedSchemes.length > 0 && displayedSchemes.every((s) => selectedIds.has(s.id));
 
   const someDisplayedSelected =
     displayedSchemes.some((s) => selectedIds.has(s.id)) && !allDisplayedSelected;
@@ -379,7 +462,7 @@ function Admin() {
 
     const deletedIds: string[] = [];
     const failedIds: string[] = [];
-    let lastError: any = null;
+    let lastError: Error | null = null;
 
     try {
       for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
@@ -388,25 +471,28 @@ function Admin() {
           // Clean up dependent child records safely if any to prevent foreign key restriction
           try {
             await supabase.from("user_scheme_matches")?.delete?.().in("scheme_id", chunk);
-          } catch {}
+          } catch {
+            /* ignore optional table cleanup error */
+          }
           try {
-            await (supabase.from("documents") as any)?.update?.({ scheme_id: null })?.in("scheme_id", chunk);
-          } catch {}
+            await supabase.from("documents")?.update({ scheme_id: null })?.in("scheme_id", chunk);
+          } catch {
+            /* ignore optional table cleanup error */
+          }
           try {
             await supabase.from("applications")?.delete?.().in("scheme_id", chunk);
-          } catch {}
+          } catch {
+            /* ignore optional table cleanup error */
+          }
 
-          const { error } = await supabase
-            .from("schemes")
-            .delete()
-            .in("id", chunk);
+          const { error } = await supabase.from("schemes").delete().in("id", chunk);
 
           if (error) throw error;
           deletedIds.push(...chunk);
-        } catch (chunkErr: any) {
+        } catch (chunkErr: unknown) {
           console.error("Chunk deletion error:", chunkErr);
           failedIds.push(...chunk);
-          lastError = chunkErr;
+          lastError = chunkErr instanceof Error ? chunkErr : new Error(getErrorMessage(chunkErr));
         }
       }
 
@@ -416,28 +502,134 @@ function Admin() {
           deletedIds.forEach((id) => next.delete(id));
           return next;
         });
-        qc.invalidateQueries({ queryKey: ["schemes"] });
+        // Optimistically update React Query cache so scheme count immediately updates
+        qc.setQueryData(["schemes"], (old: Scheme[] | undefined) => {
+          if (!old) return [];
+          const deletedSet = new Set(deletedIds);
+          return old.filter((s) => !deletedSet.has(s.id));
+        });
+        await qc.invalidateQueries({ queryKey: ["schemes"] });
+        await qc.refetchQueries({ queryKey: ["schemes"] });
       }
 
       if (failedIds.length === 0) {
         const count = deletedIds.length;
-        toast.success(
-          `Successfully deleted ${count} ${count === 1 ? "scheme" : "schemes"}`
-        );
+        toast.success(`Successfully deleted ${count} ${count === 1 ? "scheme" : "schemes"}`);
         setIsBulkDeleteDialogOpen(false);
       } else if (deletedIds.length > 0) {
         toast.error(
-          `Deleted ${deletedIds.length} schemes, but ${failedIds.length} failed: ${lastError?.message || "Unknown error"}`
+          `Deleted ${deletedIds.length} schemes, but ${failedIds.length} failed: ${lastError?.message || "Unknown error"}`,
         );
         setIsBulkDeleteDialogOpen(false);
       } else {
         throw lastError || new Error("Failed to delete schemes");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Bulk delete error:", err);
-      toast.error("Failed to delete schemes: " + (err.message || "Unknown error"));
+      toast.error("Failed to delete schemes: " + getErrorMessage(err));
     } finally {
       setIsBulkDeleting(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!isAdmin) {
+      toast.error("Unauthorized: Admin access required.");
+      return;
+    }
+
+    setIsDeletingAll(true);
+
+    // 1. Fetch all scheme IDs directly from database to ensure every single uploaded scheme is identified
+    let dbIds: string[] = [];
+    try {
+      const res = await supabase.from("schemes").select("id");
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        dbIds = res.data.map((s: { id: string }) => s.id);
+      }
+    } catch (e) {
+      console.warn("Direct DB scheme fetch error:", e);
+    }
+
+    // Combine database IDs with currently cached schemes to be 100% comprehensive
+    const idSet = new Set<string>(dbIds);
+    (schemes ?? []).forEach((s) => idSet.add(s.id));
+    const idsToDelete = Array.from(idSet);
+
+    if (idsToDelete.length === 0) {
+      toast.info("No schemes in database to delete.");
+      setIsDeletingAll(false);
+      return;
+    }
+
+    const BATCH_SIZE = 50;
+    const deletedIds: string[] = [];
+    const failedIds: string[] = [];
+    let lastError: Error | null = null;
+
+    try {
+      for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
+        const chunk = idsToDelete.slice(i, i + BATCH_SIZE);
+        try {
+          // Clean up dependent child records safely to prevent foreign key errors
+          try {
+            await supabase.from("user_scheme_matches")?.delete?.().in("scheme_id", chunk);
+          } catch {
+            /* ignore optional table cleanup error */
+          }
+          try {
+            await supabase.from("documents")?.update({ scheme_id: null })?.in("scheme_id", chunk);
+          } catch {
+            /* ignore optional table cleanup error */
+          }
+          try {
+            await supabase.from("applications")?.delete?.().in("scheme_id", chunk);
+          } catch {
+            /* ignore optional table cleanup error */
+          }
+
+          const { error } = await supabase.from("schemes").delete().in("id", chunk);
+
+          if (error) throw error;
+          deletedIds.push(...chunk);
+        } catch (chunkErr: unknown) {
+          console.error("Chunk deletion error:", chunkErr);
+          failedIds.push(...chunk);
+          lastError = chunkErr instanceof Error ? chunkErr : new Error(getErrorMessage(chunkErr));
+        }
+      }
+
+      // Sweep delete any remaining records in database
+      try {
+        await supabase.from("schemes").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      } catch {
+        /* ignore sweep delete error */
+      }
+
+      setSelectedIds(new Set());
+      // Explicitly clear query cache so the total schemes uploaded count immediately drops to 0
+      qc.setQueryData(["schemes"], []);
+      await qc.invalidateQueries({ queryKey: ["schemes"] });
+      await qc.refetchQueries({ queryKey: ["schemes"] });
+
+      if (failedIds.length === 0) {
+        toast.success(`Successfully deleted all ${deletedIds.length} schemes`);
+        setIsDeleteAllDialogOpen(false);
+        setIsBulkDeleteDialogOpen(false);
+      } else if (deletedIds.length > 0) {
+        toast.error(
+          `Deleted ${deletedIds.length} schemes, but ${failedIds.length} failed: ${lastError?.message || "Unknown error"}`,
+        );
+        setIsDeleteAllDialogOpen(false);
+        setIsBulkDeleteDialogOpen(false);
+      } else {
+        throw lastError || new Error("Failed to delete all schemes");
+      }
+    } catch (err: unknown) {
+      console.error("Delete all error:", err);
+      toast.error("Failed to delete all schemes: " + getErrorMessage(err));
+    } finally {
+      setIsDeletingAll(false);
     }
   };
 
@@ -446,13 +638,19 @@ function Admin() {
     try {
       try {
         await supabase.from("user_scheme_matches")?.delete?.().eq("scheme_id", id);
-      } catch {}
+      } catch {
+        /* ignore optional table cleanup error */
+      }
       try {
-        await (supabase.from("documents") as any)?.update?.({ scheme_id: null })?.eq("scheme_id", id);
-      } catch {}
+        await supabase.from("documents")?.update({ scheme_id: null })?.eq("scheme_id", id);
+      } catch {
+        /* ignore optional table cleanup error */
+      }
       try {
         await supabase.from("applications")?.delete?.().eq("scheme_id", id);
-      } catch {}
+      } catch {
+        /* ignore optional table cleanup error */
+      }
 
       const { error } = await supabase.from("schemes").delete().eq("id", id);
       if (error) throw error;
@@ -463,12 +661,28 @@ function Admin() {
         next.delete(id);
         return next;
       });
-      qc.invalidateQueries({ queryKey: ["schemes"] });
-    } catch (err: any) {
+      // Optimistically update React Query cache
+      qc.setQueryData(["schemes"], (old: Scheme[] | undefined) => {
+        if (!old) return [];
+        return old.filter((s) => s.id !== id);
+      });
+      await qc.invalidateQueries({ queryKey: ["schemes"] });
+      await qc.refetchQueries({ queryKey: ["schemes"] });
+    } catch (err: unknown) {
       console.error("Delete scheme error:", err);
-      toast.error(err?.message || "Failed to delete scheme");
+      toast.error(getErrorMessage(err, "Failed to delete scheme"));
     }
   };
+
+  if (isLoading) return null;
+  if (!isAdmin) {
+    return (
+      <div className="rounded-lg border bg-card p-10 text-center">
+        <ShieldAlert className="mx-auto h-10 w-10 text-destructive" />
+        <p className="mt-2 font-medium">Admin access required.</p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -484,7 +698,7 @@ function Admin() {
           }`}
         >
           <Library className="h-4 w-4" />
-          Schemes Management ({schemes?.length ?? 0})
+          Schemes Management ({totalSchemesUploaded})
         </button>
         <button
           type="button"
@@ -511,699 +725,900 @@ function Admin() {
         <>
           <PageHeader
             title="Admin · Schemes"
-            subtitle={`${schemes?.length ?? 0} schemes in database`}
+            subtitle={`${totalSchemesUploaded} schemes uploaded in database`}
             action={
               <div className="flex flex-wrap items-center gap-2">
-                {selectedIds.size > 0 && (
-              <Button
-                variant="destructive"
-                onClick={() => setIsBulkDeleteDialogOpen(true)}
-                className="gap-1.5"
-                data-testid="header-bulk-delete-button"
+                {selectedIds.size > 0 ? (
+                  <>
+                    <Button
+                      variant="destructive"
+                      onClick={() => setIsBulkDeleteDialogOpen(true)}
+                      className="gap-1.5"
+                      data-testid="header-bulk-delete-button"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete Selected ({selectedIds.size})
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => setIsDeleteAllDialogOpen(true)}
+                      className="gap-1.5"
+                      data-testid="header-delete-all-button"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete All Schemes ({totalSchemesUploaded})
+                    </Button>
+                  </>
+                ) : (
+                  totalSchemesUploaded > 0 && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsDeleteAllDialogOpen(true)}
+                      className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/30"
+                      data-testid="header-delete-all-button"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete All Schemes
+                    </Button>
+                  )
+                )}
+                <Button asChild variant="outline" className="gap-1.5">
+                  <a href="/admin/profile">
+                    <User className="h-4 w-4" />
+                    Admin Profile
+                  </a>
+                </Button>
+                <BulkUpload
+                  existingSchemes={schemes ?? []}
+                  onUploadComplete={async () => {
+                    await qc.invalidateQueries({ queryKey: ["schemes"] });
+                    await qc.refetchQueries({ queryKey: ["schemes"] });
+                  }}
+                />
+                <Button onClick={openAddScheme} className="gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  Add scheme
+                </Button>
+              </div>
+            }
+          />
+
+          {/* Admin Schemes Statistics Cards */}
+          <div
+            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6"
+            data-testid="admin-schemes-stats"
+          >
+            <div className="rounded-xl border bg-card p-4 shadow-card">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <span>Total Schemes Uploaded</span>
+                <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                  <Library className="h-4 w-4" />
+                </div>
+              </div>
+              <div
+                className="mt-2 text-2xl font-extrabold text-foreground"
+                data-testid="total-schemes-uploaded-count"
               >
-                <Trash2 className="h-4 w-4" />
-                Delete Selected ({selectedIds.size})
+                {totalSchemesUploaded}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Total active welfare schemes in database
+              </p>
+            </div>
+
+            <div className="rounded-xl border bg-card p-4 shadow-card">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <span>Central Schemes</span>
+                <div className="rounded-lg bg-blue-500/10 p-2 text-blue-600">
+                  <Building2 className="h-4 w-4" />
+                </div>
+              </div>
+              <div className="mt-2 text-2xl font-extrabold text-foreground">
+                {centralSchemesCount}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                National / Central Government initiatives
+              </p>
+            </div>
+
+            <div className="rounded-xl border bg-card p-4 shadow-card">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <span>State Schemes</span>
+                <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                </div>
+              </div>
+              <div className="mt-2 text-2xl font-extrabold text-foreground">
+                {stateSchemesCount}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">State-specific welfare programs</p>
+            </div>
+
+            <div className="rounded-xl border bg-card p-4 shadow-card">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <span>Scheme Categories</span>
+                <div className="rounded-lg bg-amber-500/10 p-2 text-amber-600">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+              </div>
+              <div className="mt-2 text-2xl font-extrabold text-foreground">{categoriesCount}</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Unique sectors &amp; beneficiaries covered
+              </p>
+            </div>
+          </div>
+
+          {/* Search and Filters Bar */}
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search schemes by name, ministry, benefits…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="All">All Categories</SelectItem>
+                {SCHEME_CATEGORIES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedLevel} onValueChange={setSelectedLevel}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="All Levels" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="All">All Levels</SelectItem>
+                <SelectItem value="Central">Central</SelectItem>
+                <SelectItem value="State">State</SelectItem>
+              </SelectContent>
+            </Select>
+            {(searchTerm || selectedCategory !== "All" || selectedLevel !== "All") && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearchTerm("");
+                  setSelectedCategory("All");
+                  setSelectedLevel("All");
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Clear filters
               </Button>
             )}
-            <Button asChild variant="outline" className="gap-1.5">
-              <a href="/admin/profile">
-                <User className="h-4 w-4" />
-                Admin Profile
-              </a>
-            </Button>
-            <BulkUpload existingSchemes={schemes ?? []} />
-            <Button onClick={openAddScheme} className="gap-1.5">
-              <Plus className="h-4 w-4" />
-              Add scheme
-            </Button>
           </div>
-        }
-      />
 
-      {/* Search and Filters Bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Search schemes by name, ministry, benefits…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All Categories" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All Categories</SelectItem>
-            {SCHEME_CATEGORIES.map((c) => (
-              <SelectItem key={c} value={c}>{c}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={selectedLevel} onValueChange={setSelectedLevel}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="All Levels" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All Levels</SelectItem>
-            <SelectItem value="Central">Central</SelectItem>
-            <SelectItem value="State">State</SelectItem>
-          </SelectContent>
-        </Select>
-        {(searchTerm || selectedCategory !== "All" || selectedLevel !== "All") && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setSearchTerm("");
-              setSelectedCategory("All");
-              setSelectedLevel("All");
-            }}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Clear filters
-          </Button>
-        )}
-      </div>
-
-      {/* Bulk Action Bar */}
-      {selectedIds.size > 0 && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 p-3 mb-4 rounded-lg bg-destructive/10 border border-destructive/20 text-foreground animate-in fade-in"
-          data-testid="bulk-actions-bar"
-        >
-          <div className="flex items-center gap-2">
-            <Badge variant="destructive" className="font-semibold">
-              {selectedIds.size} selected
-            </Badge>
-            <span className="text-sm font-medium">
-              {selectedIds.size} of {displayedSchemes.length} schemes selected
-              {(searchTerm || selectedCategory !== "All" || selectedLevel !== "All") && " (filtered view)"}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={clearSelection}
-              className="text-xs"
+          {/* Bulk Action Bar */}
+          {selectedIds.size > 0 && (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 p-3 mb-4 rounded-lg bg-destructive/10 border border-destructive/20 text-foreground animate-in fade-in"
+              data-testid="bulk-actions-bar"
             >
-              Clear selection
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => setIsBulkDeleteDialogOpen(true)}
-              className="gap-1.5"
-              data-testid="bulk-delete-button"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete Selected ({selectedIds.size})
-            </Button>
-          </div>
-        </div>
-      )}
+              <div className="flex items-center gap-2">
+                <Badge variant="destructive" className="font-semibold">
+                  {selectedIds.size} selected
+                </Badge>
+                <span className="text-sm font-medium">
+                  {selectedIds.size} of {displayedSchemes.length} schemes selected
+                  {(searchTerm || selectedCategory !== "All" || selectedLevel !== "All") &&
+                    " (filtered view)"}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline" onClick={clearSelection} className="text-xs">
+                  Clear selection
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => setIsBulkDeleteDialogOpen(true)}
+                  className="gap-1.5"
+                  data-testid="bulk-delete-button"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Selected ({selectedIds.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsDeleteAllDialogOpen(true)}
+                  className="gap-1.5 text-xs text-destructive hover:bg-destructive/20 border-destructive/30"
+                  data-testid="bulk-delete-all-button"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete All Schemes ({totalSchemesUploaded})
+                </Button>
+              </div>
+            </div>
+          )}
 
-      <div className="overflow-x-auto rounded-lg border bg-card shadow-card">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-left text-muted-foreground">
-            <tr>
-              <th className="p-3 w-10">
-                <Checkbox
-                  checked={
-                    displayedSchemes.length > 0 && allDisplayedSelected
-                      ? true
-                      : someDisplayedSelected
-                      ? "indeterminate"
-                      : false
-                  }
-                  onCheckedChange={handleSelectAll}
-                  aria-label="Select all schemes"
-                  title={allDisplayedSelected ? "Deselect all schemes" : "Select all schemes"}
-                  data-testid="select-all-checkbox"
-                />
-              </th>
-              <th className="p-3">Name</th>
-              <th className="p-3">Category</th>
-              <th className="p-3">Level / State</th>
-              <th className="p-3">Docs</th>
-              <th className="p-3">Video</th>
-              <th className="p-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayedSchemes.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                  No schemes found matching your criteria.
-                </td>
-              </tr>
-            ) : (
-              paginatedSchemes.map((s) => {
-                const isSelected = selectedIds.has(s.id);
-                const vid = getSchemeVideo(s);
-                return (
-                  <tr
-                    key={s.id}
-                    className={`border-t transition-colors ${
-                      isSelected ? "bg-muted/60" : "hover:bg-muted/40"
-                    }`}
-                  >
-                    <td className="p-3 w-10">
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggleSelectScheme(s.id)}
-                        aria-label={`Select ${s.name}`}
-                        data-testid={`select-scheme-${s.id}`}
-                      />
-                    </td>
-                    <td className="p-3 font-medium">{s.name}</td>
-                    <td className="p-3">{s.category}</td>
-                    <td className="p-3">
-                      <span>{s.level}</span>
-                      {s.state && <span className="text-xs text-muted-foreground ml-1">({s.state})</span>}
-                    </td>
-                    <td className="p-3">{splitRequiredDocuments(s.required_documents).length}</td>
-                    <td className="p-3">
-                      {vid.url ? (
-                        <Badge variant="outline" className="gap-1 border-primary/30 text-primary bg-primary/5 text-xs">
-                          <Video className="h-3 w-3" />
-                          {vid.type === "youtube" ? "YouTube" : "Uploaded"}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="p-3 text-right whitespace-nowrap">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => openEditScheme(s.id)}
-                        title="Edit scheme"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => del(s.id)}
-                        className="text-destructive hover:text-destructive"
-                        title="Delete scheme"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+          <div className="overflow-x-auto rounded-lg border bg-card shadow-card">
+            <table className="w-full text-sm">
+              <thead className="bg-muted text-left text-muted-foreground">
+                <tr>
+                  <th className="p-3 w-10">
+                    <Checkbox
+                      checked={
+                        displayedSchemes.length > 0 && allDisplayedSelected
+                          ? true
+                          : someDisplayedSelected
+                            ? "indeterminate"
+                            : false
+                      }
+                      onCheckedChange={handleSelectAll}
+                      aria-label="Select all schemes"
+                      title={allDisplayedSelected ? "Deselect all schemes" : "Select all schemes"}
+                      data-testid="select-all-checkbox"
+                    />
+                  </th>
+                  <th className="p-3">Name</th>
+                  <th className="p-3">Category</th>
+                  <th className="p-3">Level / State</th>
+                  <th className="p-3">Docs</th>
+                  <th className="p-3">Video</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayedSchemes.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                      No schemes found matching your criteria.
                     </td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination Controls */}
-      {totalSchemes > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-3">
-          <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
-            <span>
-              Showing <b>{totalSchemes === 0 ? 0 : startIndex + 1}</b>–<b>{endIndex}</b> of <b>{totalSchemes}</b> schemes
-            </span>
-            <span className="text-muted-foreground/40">|</span>
-            <div className="flex items-center gap-1.5">
-              <span>Per page:</span>
-              <Select
-                value={String(pageSize)}
-                onValueChange={(val) => {
-                  setPageSize(Number(val));
-                  setCurrentPage(1);
-                }}
-              >
-                <SelectTrigger className="h-8 w-[70px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[10, 20, 50, 100].map((size) => (
-                    <SelectItem key={size} value={String(size)}>
-                      {size}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs sm:text-sm font-medium text-muted-foreground">
-              Page {currentPage} of {totalPages}
-            </span>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="gap-1 h-8 px-2 text-xs"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="gap-1 h-8 px-2 text-xs"
-              >
-                Next
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bulk Delete Confirmation Dialog */}
-      <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-5 w-5" />
-              Delete Selected Schemes
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete {selectedIds.size} selected {selectedIds.size === 1 ? "scheme" : "schemes"}? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isBulkDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleBulkDelete();
-              }}
-              disabled={isBulkDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
-              data-testid="confirm-bulk-delete-button"
-            >
-              {isBulkDeleting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Deleting…
-                </>
-              ) : (
-                <>
-                  <Trash2 className="h-4 w-4" />
-                  Delete {selectedIds.size} {selectedIds.size === 1 ? "Scheme" : "Schemes"}
-                </>
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Edit / Add Scheme Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={(o) => (!o ? closeDialog() : null)}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {isLoadingScheme
-                ? "Loading scheme..."
-                : f?.id
-                ? "Edit scheme"
-                : "Add new scheme"}
-            </DialogTitle>
-          </DialogHeader>
-
-          {isLoadingScheme ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
-              <p className="text-sm font-medium text-foreground">Fetching scheme details from database...</p>
-              <p className="text-xs text-muted-foreground mt-1">Populating all saved fields</p>
-            </div>
-          ) : fetchError ? (
-            <div className="py-12 text-center space-y-3">
-              <AlertCircle className="mx-auto h-12 w-12 text-destructive" />
-              <h3 className="text-base font-semibold text-destructive">Failed to load scheme</h3>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto">{fetchError}</p>
-              <div className="pt-2 flex justify-center gap-2">
-                <Button variant="outline" size="sm" onClick={closeDialog}>
-                  Close
-                </Button>
-                {selectedSchemeId && (
-                  <Button size="sm" onClick={() => openEditScheme(selectedSchemeId)}>
-                    <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                    Retry
-                  </Button>
+                ) : (
+                  paginatedSchemes.map((s) => {
+                    const isSelected = selectedIds.has(s.id);
+                    const vid = getSchemeVideo(s);
+                    return (
+                      <tr
+                        key={s.id}
+                        className={`border-t transition-colors ${
+                          isSelected ? "bg-muted/60" : "hover:bg-muted/40"
+                        }`}
+                      >
+                        <td className="p-3 w-10">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelectScheme(s.id)}
+                            aria-label={`Select ${s.name}`}
+                            data-testid={`select-scheme-${s.id}`}
+                          />
+                        </td>
+                        <td className="p-3 font-medium">{s.name}</td>
+                        <td className="p-3">{s.category}</td>
+                        <td className="p-3">
+                          <span>{s.level}</span>
+                          {s.state && (
+                            <span className="text-xs text-muted-foreground ml-1">({s.state})</span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {splitRequiredDocuments(s.required_documents).length}
+                        </td>
+                        <td className="p-3">
+                          {vid.url ? (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-primary/30 text-primary bg-primary/5 text-xs"
+                            >
+                              <Video className="h-3 w-3" />
+                              {vid.type === "youtube" ? "YouTube" : "Uploaded"}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right whitespace-nowrap">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => openEditScheme(s.id)}
+                            title="Edit scheme"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => del(s.id)}
+                            className="text-destructive hover:text-destructive"
+                            title="Delete scheme"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
-              </div>
-            </div>
-          ) : f ? (
-            <form onSubmit={save} className="space-y-4">
-              <div>
-                <Label>Scheme name *</Label>
-                <Input
-                  required
-                  value={f.name}
-                  onChange={(x) => setF({ ...f, name: x.target.value })}
-                  placeholder="e.g. PM Kisan Samman Nidhi"
-                />
-              </div>
+              </tbody>
+            </table>
+          </div>
 
-              <div>
-                <Label>Description</Label>
-                <Textarea
-                  rows={3}
-                  value={f.description}
-                  onChange={(x) => setF({ ...f, description: x.target.value })}
-                  placeholder="Detailed overview and scope of the scheme"
-                />
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label>Department / Ministry</Label>
-                  <Input
-                    value={f.ministry}
-                    onChange={(x) => setF({ ...f, ministry: x.target.value })}
-                    placeholder="e.g. Ministry of Agriculture"
-                  />
-                </div>
-
-                <div>
-                  <Label>Category</Label>
-                  <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
-                    <SelectTrigger>
+          {/* Pagination Controls */}
+          {totalSchemes > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-3">
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+                <span data-testid="pagination-summary">
+                  Showing <b>{totalSchemes === 0 ? 0 : startIndex + 1}</b>–<b>{endIndex}</b> of{" "}
+                  <b>{totalSchemes}</b> schemes (Total schemes uploaded:{" "}
+                  <b>{totalSchemesUploaded}</b>)
+                </span>
+                <span className="text-muted-foreground/40">|</span>
+                <div className="flex items-center gap-1.5">
+                  <span>Per page:</span>
+                  <Select
+                    value={String(pageSize)}
+                    onValueChange={(val) => {
+                      setPageSize(Number(val));
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-[70px] text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {SCHEME_CATEGORIES.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
+                      {[10, 20, 50, 100].map((size) => (
+                        <SelectItem key={size} value={String(size)}>
+                          {size}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div>
-                  <Label>Government Type</Label>
-                  <Select
-                    value={f.level}
-                    onValueChange={(v) =>
-                      setF({ ...f, level: v, state: v === "Central" ? null : f.state })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Central">Central Government</SelectItem>
-                      <SelectItem value="State">State Government</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {f.level === "State" ? (
-                  <div>
-                    <Label>State</Label>
-                    <Select
-                      value={f.state || ""}
-                      onValueChange={(v) => setF({ ...f, state: v || null })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select state..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {STATES.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {s}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <div>
-                    <Label>Official application URL</Label>
-                    <Input
-                      type="url"
-                      value={f.apply_url}
-                      onChange={(x) => setF({ ...f, apply_url: x.target.value })}
-                      placeholder="https://... (Optional)"
-                    />
-                  </div>
-                )}
               </div>
 
-              {f.level === "State" && (
-                <div>
-                  <Label>Official application URL</Label>
-                  <Input
-                    type="url"
-                    value={f.apply_url}
-                    onChange={(x) => setF({ ...f, apply_url: x.target.value })}
-                    placeholder="https://... (Optional)"
-                  />
-                </div>
-              )}
-
-              <div>
-                <Label>Benefits</Label>
-                <Textarea
-                  rows={2}
-                  value={f.benefits}
-                  onChange={(x) => setF({ ...f, benefits: x.target.value })}
-                  placeholder="Details of financial assistance, subsidy, or physical grants (separate points with semicolons, bullets, or newlines)"
-                />
-                {f.benefits && splitIntoPoints(f.benefits).length > 1 && (
-                  <div className="mt-1.5 rounded border bg-muted/40 p-2 text-xs">
-                    <span className="font-medium text-muted-foreground">Point-wise Preview:</span>
-                    <PointWiseList text={f.benefits} icon="check" className="mt-1" itemClassName="text-xs text-muted-foreground" />
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <Label>Eligibility Criteria (summary shown to users)</Label>
-                <Textarea
-                  rows={2}
-                  value={f.eligibility_text}
-                  onChange={(x) => setF({ ...f, eligibility_text: x.target.value })}
-                  placeholder="Who is eligible to apply for this scheme (separate points with semicolons, bullets, or newlines)"
-                />
-                {f.eligibility_text && splitIntoPoints(f.eligibility_text).length > 1 && (
-                  <div className="mt-1.5 rounded border bg-muted/40 p-2 text-xs">
-                    <span className="font-medium text-muted-foreground">Point-wise Preview:</span>
-                    <PointWiseList text={f.eligibility_text} icon="bullet" className="mt-1" itemClassName="text-xs text-muted-foreground" />
-                  </div>
-                )}
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label>Application Process</Label>
-                  <Textarea
-                    rows={3}
-                    value={e.application_process ?? ""}
-                    onChange={(x) => setE("application_process", x.target.value)}
-                    placeholder="Step-by-step application instructions"
-                  />
-                </div>
-                <div>
-                  <Label>Application Deadline</Label>
-                  <Input
-                    type="date"
-                    value={e.application_deadline ?? ""}
-                    onChange={(x) => setE("application_deadline", x.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* Tutorial Video Section */}
-              <AdminVideoUploader
-                videoUrl={f.application_video_url}
-                videoType={f.video_type as any}
-                schemeId={f.id}
-                onChange={(url, type) =>
-                  setF({ ...f, application_video_url: url, video_type: type })
-                }
-              />
-
-              {/* Eligibility Rules */}
-              <fieldset className="space-y-3 rounded-md border p-4 bg-muted/20">
-                <legend className="px-1 text-sm font-semibold">Structured eligibility rules</legend>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div>
-                    <Label>Min age</Label>
-                    <Input
-                      type="number"
-                      value={e.min_age ?? ""}
-                      onChange={(x) => setE("min_age", num(x.target.value))}
-                      placeholder="e.g. 18"
-                    />
-                  </div>
-                  <div>
-                    <Label>Max age</Label>
-                    <Input
-                      type="number"
-                      value={e.max_age ?? ""}
-                      onChange={(x) => setE("max_age", num(x.target.value))}
-                      placeholder="e.g. 60"
-                    />
-                  </div>
-                  <div>
-                    <Label>Max income (₹)</Label>
-                    <Input
-                      type="number"
-                      value={e.max_income ?? ""}
-                      onChange={(x) => setE("max_income", num(x.target.value))}
-                      placeholder="e.g. 250000"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label>Residence area</Label>
-                  <Select
-                    value={e.area ?? "any"}
-                    onValueChange={(v) => setE("area", v === "any" ? undefined : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="any">Any (Rural & Urban)</SelectItem>
-                      <SelectItem value="Rural">Rural Only</SelectItem>
-                      <SelectItem value="Urban">Urban Only</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label>Gender</Label>
-                  <Chips options={GENDERS} value={e.genders} onChange={(v) => setE("genders", v)} />
-                </div>
-
-                <div>
-                  <Label>Social Category</Label>
-                  <Chips options={CASTE_CATEGORIES} value={e.categories} onChange={(v) => setE("categories", v)} />
-                </div>
-
-                <div>
-                  <Label>Occupation</Label>
-                  <Chips options={OCCUPATIONS} value={e.occupations} onChange={(v) => setE("occupations", v)} />
-                </div>
-
-                <div>
-                  <Label>States (leave empty for All India)</Label>
-                  <Chips options={STATES} value={e.states} onChange={(v) => setE("states", v)} />
-                </div>
-
-                <div className="grid gap-2 sm:grid-cols-3 pt-1">
-                  {(
-                    [
-                      ["farmer", "Farmers only"],
-                      ["student", "Students only"],
-                      ["disability", "Persons with Disability only"],
-                    ] as const
-                  ).map(([k, l]) => (
-                    <label key={k} className="flex items-center justify-between rounded-md border p-2 text-xs font-medium bg-card">
-                      {l}
-                      <Switch checked={!!e[k]} onCheckedChange={(v) => setE(k, v)} />
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              {/* Required Documents Section */}
-              <div className="space-y-2">
-                <Label>Required documents</Label>
-
-                {/* Selected document badges with remove button */}
-                {f.required_documents.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2 rounded-md border bg-card mb-2">
-                    {f.required_documents.map((doc) => (
-                      <Badge
-                        key={doc}
-                        variant="secondary"
-                        className="gap-1 pl-2.5 pr-1 py-1 text-xs font-normal"
-                      >
-                        {doc}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setF({
-                              ...f,
-                              required_documents: f.required_documents.filter((d) => d !== doc),
-                            })
-                          }
-                          className="hover:bg-muted-foreground/20 rounded-full p-0.5 transition-colors"
-                          title={`Remove ${doc}`}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-
-                {/* Common Document Chips */}
-                <Chips
-                  options={Array.from(new Set([...DOC_TYPES, ...f.required_documents]))}
-                  value={f.required_documents}
-                  onChange={(v) => setF({ ...f, required_documents: v })}
-                />
-
-                {/* Add Custom Document Input */}
-                <div className="flex gap-2 pt-1.5">
-                  <Input
-                    placeholder="Add other required document name..."
-                    value={customDocInput}
-                    onChange={(e) => setCustomDocInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addCustomDoc();
-                      }
-                    }}
-                    className="h-8 text-xs"
-                  />
+              <div className="flex items-center gap-2">
+                <span className="text-xs sm:text-sm font-medium text-muted-foreground">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <div className="flex items-center gap-1">
                   <Button
-                    type="button"
-                    size="sm"
                     variant="outline"
-                    onClick={addCustomDoc}
-                    disabled={!customDocInput.trim()}
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="gap-1 h-8 px-2 text-xs"
                   >
-                    Add Doc
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="gap-1 h-8 px-2 text-xs"
+                  >
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </div>
+            </div>
+          )}
 
-              {/* Action Buttons */}
-              <div className="flex justify-end gap-2 pt-3 border-t">
-                <Button type="button" variant="outline" onClick={closeDialog} disabled={isSaving}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isSaving} className="gap-1.5 min-w-[120px]">
-                  {isSaving ? (
+          {/* Bulk Delete Confirmation Dialog */}
+          <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                  <AlertCircle className="h-5 w-5" />
+                  Delete Selected Schemes
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete {selectedIds.size} selected{" "}
+                  {selectedIds.size === 1 ? "scheme" : "schemes"}? This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isBulkDeleting}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleBulkDelete();
+                  }}
+                  disabled={isBulkDeleting}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
+                  data-testid="confirm-bulk-delete-button"
+                >
+                  {isBulkDeleting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
+                      Deleting…
                     </>
-                  ) : f.id ? (
-                    "Update Scheme"
                   ) : (
-                    "Create Scheme"
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Delete {selectedIds.size} Selected{" "}
+                      {selectedIds.size === 1 ? "Scheme" : "Schemes"}
+                    </>
                   )}
-                </Button>
-              </div>
-            </form>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {/* Delete All Schemes Confirmation Dialog */}
+          <AlertDialog open={isDeleteAllDialogOpen} onOpenChange={setIsDeleteAllDialogOpen}>
+            <AlertDialogContent data-testid="delete-all-dialog-content">
+              <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                  <AlertCircle className="h-5 w-5" />
+                  Delete All Schemes from Database
+                </AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2 text-sm text-muted-foreground">
+                    <p>
+                      Are you sure you want to permanently delete{" "}
+                      <b>ALL {totalSchemesUploaded} schemes</b> from the database?
+                    </p>
+                    <div className="text-xs text-destructive font-medium bg-destructive/10 p-2.5 rounded border border-destructive/20">
+                      Warning: This action is permanent and cannot be undone. All scheme records,
+                      associated applications, and citizen matches will be deleted.
+                    </div>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isDeletingAll}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleDeleteAll();
+                  }}
+                  disabled={isDeletingAll}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
+                  data-testid="confirm-delete-all-button"
+                >
+                  {isDeletingAll ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Deleting All Schemes…
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Delete All {totalSchemesUploaded} Schemes
+                    </>
+                  )}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {/* Edit / Add Scheme Dialog */}
+          <Dialog open={isDialogOpen} onOpenChange={(o) => (!o ? closeDialog() : null)}>
+            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>
+                  {isLoadingScheme ? "Loading scheme..." : f?.id ? "Edit scheme" : "Add new scheme"}
+                </DialogTitle>
+              </DialogHeader>
+
+              {isLoadingScheme ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
+                  <p className="text-sm font-medium text-foreground">
+                    Fetching scheme details from database...
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Populating all saved fields</p>
+                </div>
+              ) : fetchError ? (
+                <div className="py-12 text-center space-y-3">
+                  <AlertCircle className="mx-auto h-12 w-12 text-destructive" />
+                  <h3 className="text-base font-semibold text-destructive">
+                    Failed to load scheme
+                  </h3>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">{fetchError}</p>
+                  <div className="pt-2 flex justify-center gap-2">
+                    <Button variant="outline" size="sm" onClick={closeDialog}>
+                      Close
+                    </Button>
+                    {selectedSchemeId && (
+                      <Button size="sm" onClick={() => openEditScheme(selectedSchemeId)}>
+                        <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : f ? (
+                <form onSubmit={save} className="space-y-4">
+                  <div>
+                    <Label>Scheme name *</Label>
+                    <Input
+                      required
+                      value={f.name}
+                      onChange={(x) => setF({ ...f, name: x.target.value })}
+                      placeholder="e.g. PM Kisan Samman Nidhi"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Description</Label>
+                    <Textarea
+                      rows={3}
+                      value={f.description}
+                      onChange={(x) => setF({ ...f, description: x.target.value })}
+                      placeholder="Detailed overview and scope of the scheme"
+                    />
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Department / Ministry</Label>
+                      <Input
+                        value={f.ministry}
+                        onChange={(x) => setF({ ...f, ministry: x.target.value })}
+                        placeholder="e.g. Ministry of Agriculture"
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Category</Label>
+                      <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SCHEME_CATEGORIES.map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label>Government Type</Label>
+                      <Select
+                        value={f.level}
+                        onValueChange={(v) =>
+                          setF({ ...f, level: v, state: v === "Central" ? null : f.state })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Central">Central Government</SelectItem>
+                          <SelectItem value="State">State Government</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {f.level === "State" ? (
+                      <div>
+                        <Label>State</Label>
+                        <Select
+                          value={f.state || ""}
+                          onValueChange={(v) => setF({ ...f, state: v || null })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select state..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {STATES.map((s) => (
+                              <SelectItem key={s} value={s}>
+                                {s}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div>
+                        <Label>Official application URL</Label>
+                        <Input
+                          type="url"
+                          value={f.apply_url}
+                          onChange={(x) => setF({ ...f, apply_url: x.target.value })}
+                          placeholder="https://... (Optional)"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {f.level === "State" && (
+                    <div>
+                      <Label>Official application URL</Label>
+                      <Input
+                        type="url"
+                        value={f.apply_url}
+                        onChange={(x) => setF({ ...f, apply_url: x.target.value })}
+                        placeholder="https://... (Optional)"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <Label>Benefits</Label>
+                    <Textarea
+                      rows={2}
+                      value={f.benefits}
+                      onChange={(x) => setF({ ...f, benefits: x.target.value })}
+                      placeholder="Details of financial assistance, subsidy, or physical grants (separate points with semicolons, bullets, or newlines)"
+                    />
+                    {f.benefits && splitIntoPoints(f.benefits).length > 1 && (
+                      <div className="mt-1.5 rounded border bg-muted/40 p-2 text-xs">
+                        <span className="font-medium text-muted-foreground">
+                          Point-wise Preview:
+                        </span>
+                        <PointWiseList
+                          text={f.benefits}
+                          icon="check"
+                          className="mt-1"
+                          itemClassName="text-xs text-muted-foreground"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <Label>Eligibility Criteria (summary shown to users)</Label>
+                    <Textarea
+                      rows={2}
+                      value={f.eligibility_text}
+                      onChange={(x) => setF({ ...f, eligibility_text: x.target.value })}
+                      placeholder="Who is eligible to apply for this scheme (separate points with semicolons, bullets, or newlines)"
+                    />
+                    {f.eligibility_text && splitIntoPoints(f.eligibility_text).length > 1 && (
+                      <div className="mt-1.5 rounded border bg-muted/40 p-2 text-xs">
+                        <span className="font-medium text-muted-foreground">
+                          Point-wise Preview:
+                        </span>
+                        <PointWiseList
+                          text={f.eligibility_text}
+                          icon="bullet"
+                          className="mt-1"
+                          itemClassName="text-xs text-muted-foreground"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Application Process</Label>
+                      <Textarea
+                        rows={3}
+                        value={e.application_process ?? ""}
+                        onChange={(x) => setE("application_process", x.target.value)}
+                        placeholder="Step-by-step application instructions"
+                      />
+                    </div>
+                    <div>
+                      <Label>Application Deadline</Label>
+                      <Input
+                        type="date"
+                        value={e.application_deadline ?? ""}
+                        onChange={(x) => setE("application_deadline", x.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Tutorial Video Section */}
+                  <AdminVideoUploader
+                    videoUrl={f.application_video_url}
+                    videoType={(f.video_type as "uploaded" | "youtube" | null) ?? null}
+                    schemeId={f.id}
+                    onChange={(url, type) =>
+                      setF({ ...f, application_video_url: url, video_type: type })
+                    }
+                  />
+
+                  {/* Eligibility Rules */}
+                  <fieldset className="space-y-3 rounded-md border p-4 bg-muted/20">
+                    <legend className="px-1 text-sm font-semibold">
+                      Structured eligibility rules
+                    </legend>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div>
+                        <Label>Min age</Label>
+                        <Input
+                          type="number"
+                          value={e.min_age ?? ""}
+                          onChange={(x) => setE("min_age", num(x.target.value))}
+                          placeholder="e.g. 18"
+                        />
+                      </div>
+                      <div>
+                        <Label>Max age</Label>
+                        <Input
+                          type="number"
+                          value={e.max_age ?? ""}
+                          onChange={(x) => setE("max_age", num(x.target.value))}
+                          placeholder="e.g. 60"
+                        />
+                      </div>
+                      <div>
+                        <Label>Max income (₹)</Label>
+                        <Input
+                          type="number"
+                          value={e.max_income ?? ""}
+                          onChange={(x) => setE("max_income", num(x.target.value))}
+                          placeholder="e.g. 250000"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label>Residence area</Label>
+                      <Select
+                        value={e.area ?? "any"}
+                        onValueChange={(v) => setE("area", v === "any" ? undefined : v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="any">Any (Rural & Urban)</SelectItem>
+                          <SelectItem value="Rural">Rural Only</SelectItem>
+                          <SelectItem value="Urban">Urban Only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label>Gender</Label>
+                      <Chips
+                        options={GENDERS}
+                        value={e.genders}
+                        onChange={(v) => setE("genders", v)}
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Social Category</Label>
+                      <Chips
+                        options={CASTE_CATEGORIES}
+                        value={e.categories}
+                        onChange={(v) => setE("categories", v)}
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Occupation</Label>
+                      <Chips
+                        options={OCCUPATIONS}
+                        value={e.occupations}
+                        onChange={(v) => setE("occupations", v)}
+                      />
+                    </div>
+
+                    <div>
+                      <Label>States (leave empty for All India)</Label>
+                      <Chips
+                        options={STATES}
+                        value={e.states}
+                        onChange={(v) => setE("states", v)}
+                      />
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-3 pt-1">
+                      {(
+                        [
+                          ["farmer", "Farmers only"],
+                          ["student", "Students only"],
+                          ["disability", "Persons with Disability only"],
+                        ] as const
+                      ).map(([k, l]) => (
+                        <label
+                          key={k}
+                          className="flex items-center justify-between rounded-md border p-2 text-xs font-medium bg-card"
+                        >
+                          {l}
+                          <Switch checked={!!e[k]} onCheckedChange={(v) => setE(k, v)} />
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+
+                  {/* Required Documents Section */}
+                  <div className="space-y-2">
+                    <Label>Required documents</Label>
+
+                    {/* Selected document badges with remove button */}
+                    {f.required_documents.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 p-2 rounded-md border bg-card mb-2">
+                        {f.required_documents.map((doc) => (
+                          <Badge
+                            key={doc}
+                            variant="secondary"
+                            className="gap-1 pl-2.5 pr-1 py-1 text-xs font-normal"
+                          >
+                            {doc}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setF({
+                                  ...f,
+                                  required_documents: f.required_documents.filter((d) => d !== doc),
+                                })
+                              }
+                              className="hover:bg-muted-foreground/20 rounded-full p-0.5 transition-colors"
+                              title={`Remove ${doc}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Common Document Chips */}
+                    <Chips
+                      options={Array.from(new Set([...DOC_TYPES, ...f.required_documents]))}
+                      value={f.required_documents}
+                      onChange={(v) => setF({ ...f, required_documents: v })}
+                    />
+
+                    {/* Add Custom Document Input */}
+                    <div className="flex gap-2 pt-1.5">
+                      <Input
+                        placeholder="Add other required document name..."
+                        value={customDocInput}
+                        onChange={(e) => setCustomDocInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addCustomDoc();
+                          }
+                        }}
+                        className="h-8 text-xs"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={addCustomDoc}
+                        disabled={!customDocInput.trim()}
+                      >
+                        Add Doc
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-2 pt-3 border-t">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={closeDialog}
+                      disabled={isSaving}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={isSaving} className="gap-1.5 min-w-[120px]">
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : f.id ? (
+                        "Update Scheme"
+                      ) : (
+                        "Create Scheme"
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>

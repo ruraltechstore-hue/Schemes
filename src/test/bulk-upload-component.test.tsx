@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { BulkUpload } from "@/components/BulkUpload";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -22,7 +22,7 @@ function renderBulkUpload(existingSchemes: Scheme[] = []) {
   return render(
     <QueryClientProvider client={qc}>
       <BulkUpload existingSchemes={existingSchemes} />
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -165,5 +165,89 @@ describe("BulkUpload Component Integration Tests", () => {
 
     expect(screen.getByDisplayValue("Scheme Without Any Link")).toBeInTheDocument();
     expect(screen.getByTitle("No tutorial video provided")).toBeInTheDocument();
+  });
+
+  it("displays 8 mapping rows in a dedicated scrollable table container with sticky header", async () => {
+    renderBulkUpload();
+    fireEvent.click(screen.getByRole("button", { name: /bulk upload schemes/i }));
+
+    // CSV with 8 distinct column headers
+    const csvContent = `"Col 1 - Scheme Name","Col 2 - Description","Col 3 - Ministry","Col 4 - Category","Col 5 - Benefits","Col 6 - Criteria","Col 7 - Docs","Col 8 - Apply URL"
+"Test Scheme A","Desc A","Ministry A","Welfare","Benefits A","Eligible A","Aadhaar","https://a.gov.in"`;
+
+    const file = new File([csvContent], "eight_columns.csv", { type: "text/csv" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Review Column Header Mapping/i)).toBeInTheDocument();
+    });
+
+    // Check table container presence and scrollability classes
+    const tableContainer = screen.getByTestId("column-mapping-table-container");
+    expect(tableContainer).toBeInTheDocument();
+    expect(tableContainer.className).toContain("overflow-y-auto");
+    expect(tableContainer.className).toContain("min-h-[380px]");
+
+    // Verify all 8 column header rows are rendered in the mapping table
+    expect(screen.getByText("Col 1 - Scheme Name")).toBeInTheDocument();
+    expect(screen.getByText("Col 2 - Description")).toBeInTheDocument();
+    expect(screen.getByText("Col 3 - Ministry")).toBeInTheDocument();
+    expect(screen.getByText("Col 4 - Category")).toBeInTheDocument();
+    expect(screen.getByText("Col 5 - Benefits")).toBeInTheDocument();
+    expect(screen.getByText("Col 6 - Criteria")).toBeInTheDocument();
+    expect(screen.getByText("Col 7 - Docs")).toBeInTheDocument();
+    expect(screen.getByText("Col 8 - Apply URL")).toBeInTheDocument();
+
+    // Verify fixed / sticky table header with backdrop blur
+    const tableHeader = tableContainer.querySelector("thead");
+    expect(tableHeader).not.toBeNull();
+    expect(tableHeader?.className).toContain("sticky");
+    expect(tableHeader?.className).toContain("top-0");
+
+    // Verify outer vertical scrolling container on the right corner encompasses Bulk Files and Review Column Header Mapping
+    const scrollContainer = screen.getByTestId("mapping-scroll-container");
+    expect(scrollContainer).toBeInTheDocument();
+    expect(scrollContainer.className).toContain("overflow-y-auto");
+    expect(within(scrollContainer).getByText(/Review Column Header Mapping/i)).toBeInTheDocument();
+    expect(within(scrollContainer).getByText(/Bulk Files/i)).toBeInTheDocument();
+  });
+
+  it("verifies arrow mark drag scroll feature is removed and right corner vertical scrolling encompasses mapping sections", async () => {
+    renderBulkUpload();
+    fireEvent.click(screen.getByRole("button", { name: /bulk upload schemes/i }));
+
+    const csvContent = `"Col 1 - Scheme Name","Col 2 - Description","Col 3 - Ministry","Col 4 - Category","Col 5 - Benefits"\n"Test A","Desc A","Ministry A","Category A","Benefits A"`;
+    const file = new File([csvContent], "resize_test.csv", { type: "text/csv" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Review Column Header Mapping/i)).toBeInTheDocument();
+    });
+
+    // 1. Verify arrow mark drag scroll handle is NOT in the document
+    expect(screen.queryByTestId("column-mapping-resize-handle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mapping-scroll-up-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mapping-scroll-down-btn")).not.toBeInTheDocument();
+
+    // 2. Verify right corner vertical scrolling container encompasses Bulk Files and Review Column Header Mapping
+    const scrollContainer = screen.getByTestId("mapping-scroll-container");
+    expect(scrollContainer).toBeInTheDocument();
+    expect(scrollContainer.className).toContain("overflow-y-auto");
+    expect(within(scrollContainer).getByText(/Bulk Files/i)).toBeInTheDocument();
+    expect(within(scrollContainer).getByText(/Review Column Header Mapping/i)).toBeInTheDocument();
+
+    // 3. Verify clean column mapping table container with sticky header
+    const tableContainer = screen.getByTestId("column-mapping-table-container");
+    expect(tableContainer).toBeInTheDocument();
+    expect(tableContainer.className).toContain("overflow-y-auto");
+    expect(tableContainer.className).toContain("min-h-[380px]");
+
+    const tableHeader = tableContainer.querySelector("thead");
+    expect(tableHeader?.className).toContain("sticky");
+    expect(tableHeader?.className).toContain("top-0");
   });
 });

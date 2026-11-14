@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { BulkUpload } from "@/components/BulkUpload";
 import { parseBulkFile } from "@/lib/scheme-bulk-import";
@@ -26,7 +26,7 @@ function renderBulkUpload(existingSchemes: Scheme[] = []) {
   return render(
     <QueryClientProvider client={qc}>
       <BulkUpload existingSchemes={existingSchemes} />
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -256,8 +256,8 @@ describe("Multiple Bulk Data Upload Tests", () => {
 
     // Check per-file breakdown table
     expect(screen.getByText("Breakdown by Uploaded Bulk File")).toBeInTheDocument();
-    expect(screen.getByText("tech_batch1.csv")).toBeInTheDocument();
-    expect(screen.getByText("tech_batch2.csv")).toBeInTheDocument();
+    expect(screen.getAllByText("tech_batch1.csv").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("tech_batch2.csv").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/1 added/i).length).toBe(2);
 
     // Verify upload more bulk data button resets state
@@ -309,5 +309,140 @@ describe("Multiple Bulk Data Upload Tests", () => {
     // The newly uploaded file should be actively selected
     expect(screen.getByText(/File:/i)).toHaveTextContent("second_file.csv");
   });
-});
 
+  it("renders adjustable, collapsible top panel and allows resizing & collapsing on results page", async () => {
+    renderBulkUpload();
+    fireEvent.click(screen.getByRole("button", { name: /bulk upload schemes/i }));
+
+    const csv = `Scheme Name,Category,Benefits\n"Scheme Alpha","Health","Free checkups"\n"Scheme Beta","Education","Scholarships"\n"Scheme Gamma","Agriculture","Seeds subsidy"`;
+    const file = new File([csv], "results_test.csv", { type: "text/csv" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /preview data/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /preview data/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /import 3 schemes/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /import 3 schemes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Import Process Finished/i)).toBeInTheDocument();
+    });
+
+    // 1. Verify Top Panel & Internal Scrollbar
+    const topPanel = screen.getByTestId("uploaded-files-panel");
+    expect(topPanel).toBeInTheDocument();
+    const expandedPanel = screen.getByTestId("expanded-top-panel");
+    expect(expandedPanel).toBeInTheDocument();
+    expect(expandedPanel.className).toContain("overflow-y-auto");
+
+    // 2. Verify Draggable Resize Handle
+    const resizeHandle = screen.getByTestId("results-resize-handle");
+    expect(resizeHandle).toBeInTheDocument();
+
+    // Simulate drag resize
+    fireEvent.mouseDown(resizeHandle, { clientY: 200 });
+    fireEvent.mouseMove(window, { clientY: 280 });
+    fireEvent.mouseUp(window);
+
+    // 3. Verify Collapse / Minimise button
+    const toggleBtn = screen.getByTestId("toggle-top-panel-btn");
+    expect(toggleBtn).toBeInTheDocument();
+    expect(screen.getByText(/Minimize/i)).toBeInTheDocument();
+
+    // Click to collapse
+    fireEvent.click(toggleBtn);
+
+    // 4. Verify compact summary bar is shown when minimised
+    await waitFor(() => {
+      expect(screen.getByTestId("collapsed-summary-bar")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("expanded-top-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("results-resize-handle")).not.toBeInTheDocument();
+    const collapsedBar = screen.getByTestId("collapsed-summary-bar");
+    expect(within(collapsedBar).getByText(/results_test.csv/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 schemes uploaded/i)).toBeInTheDocument();
+    expect(screen.getByText(/Expand/i)).toBeInTheDocument();
+
+    // Click expand to restore
+    fireEvent.click(toggleBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("expanded-top-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("results-resize-handle")).toBeInTheDocument();
+    });
+
+    // 5. Verify Schemes Results Section shows multiple schemes at once & has vertical scroll container on the right
+    const resultsScrollContainer = screen.getByTestId("results-scroll-container");
+    expect(resultsScrollContainer).toBeInTheDocument();
+    expect(resultsScrollContainer.className).toContain("overflow-y-auto");
+    expect(resultsScrollContainer.className).toContain("scrollbar-thumb");
+
+    const schemesResultsSection = screen.getByTestId("schemes-results-section");
+    expect(schemesResultsSection).toBeInTheDocument();
+    const schemesList = screen.getByTestId("schemes-results-list");
+    expect(schemesList).toBeInTheDocument();
+    expect(schemesList.className).toContain("overflow-y-auto");
+    expect(schemesList.className).toContain("scrollbar-thumb");
+
+    // All 3 schemes should be visible in the list simultaneously
+    expect(screen.getByText("Scheme Alpha")).toBeInTheDocument();
+    expect(screen.getByText("Scheme Beta")).toBeInTheDocument();
+    expect(screen.getByText("Scheme Gamma")).toBeInTheDocument();
+
+    // 6. Test Switch to Table / Rows view mode
+    const viewRowsBtn = screen.getByTestId("view-rows-btn");
+    fireEvent.click(viewRowsBtn);
+    expect(schemesList.querySelector("table")).not.toBeNull();
+
+    // 7. Test Results Search filter
+    const searchInput = screen.getByTestId("results-search-input");
+    fireEvent.change(searchInput, { target: { value: "Alpha" } });
+
+    expect(screen.getByText("Scheme Alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Scheme Beta")).not.toBeInTheDocument();
+    expect(screen.queryByText("Scheme Gamma")).not.toBeInTheDocument();
+
+    // Clear search
+    fireEvent.change(searchInput, { target: { value: "" } });
+    expect(screen.getByText("Scheme Beta")).toBeInTheDocument();
+    expect(screen.getByText("Scheme Gamma")).toBeInTheDocument();
+  });
+
+  it("displays total valid schemes uploaded count while importing schemes", async () => {
+    renderBulkUpload();
+    fireEvent.click(screen.getByRole("button", { name: /bulk upload schemes/i }));
+
+    const csv = `Scheme Name,Category\n"Scheme 101","Health"\n"Scheme 102","Education"\n"Scheme 103","Agriculture"`;
+    const file = new File([csv], "count_test.csv", { type: "text/csv" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /preview data/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /preview data/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /import 3 schemes/i })).toBeInTheDocument();
+    });
+
+    // Click Import
+    fireEvent.click(screen.getByRole("button", { name: /import 3 schemes/i }));
+
+    // Verify importing step shows total valid schemes count and uploaded indicator
+    expect(screen.getByText(/Importing Schemes to Database/i)).toBeInTheDocument();
+    expect(screen.getByTestId("importing-schemes-count")).toBeInTheDocument();
+    expect(screen.getByTestId("importing-schemes-count")).toHaveTextContent("Total Valid Schemes: 3");
+    expect(screen.getByTestId("importing-uploaded-count-label")).toHaveTextContent("Schemes Uploaded:");
+
+    await waitFor(() => {
+      expect(screen.getByText(/Import Process Finished/i)).toBeInTheDocument();
+    });
+  });
+});
