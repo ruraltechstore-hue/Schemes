@@ -96,9 +96,26 @@ export function BulkUpload({
   const [currentImportFile, setCurrentImportFile] = useState("");
   const [currentImportIndex, setCurrentImportIndex] = useState(0);
   const [totalImportCount, setTotalImportCount] = useState(0);
-  const [stats, setStats] = useState({ success: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
+  const [stats, setStats] = useState({
+    success: 0,
+    updated: 0,
+    totalSuccessful: 0,
+    invalid: 0,
+    duplicate: 0,
+    failed: 0,
+    skipped: 0,
+    total: 0,
+  });
   const [perFileStats, setPerFileStats] = useState<
-    { name: string; success: number; updated: number; skipped: number; failed: number }[]
+    {
+      name: string;
+      success: number;
+      updated: number;
+      invalid: number;
+      duplicate: number;
+      skipped: number;
+      failed: number;
+    }[]
   >([]);
   const [failureDetails, setFailureDetails] = useState<
     { name: string; error: string; file?: string | undefined }[]
@@ -212,7 +229,16 @@ export function BulkUpload({
     setCurrentImportName("");
     setCurrentImportIndex(0);
     setTotalImportCount(0);
-    setStats({ success: 0, updated: 0, skipped: 0, failed: 0, total: 0 });
+    setStats({
+      success: 0,
+      updated: 0,
+      totalSuccessful: 0,
+      invalid: 0,
+      duplicate: 0,
+      failed: 0,
+      skipped: 0,
+      total: 0,
+    });
     setFileFilter("all");
     setFilterTab("all");
     if (fileRef.current) fileRef.current.value = "";
@@ -504,9 +530,18 @@ export function BulkUpload({
     const toProcess = rows.filter((r) => !r.skip && r.status !== "invalid");
     setTotalImportCount(toProcess.length);
     setCurrentImportIndex(0);
+
+    const invalidRowsCount = rows.filter((r) => r.status === "invalid").length;
+    const duplicateSkippedCount = rows.filter(
+      (r) => r.status === "duplicate" && (r.skip || duplicateHandling === "skip"),
+    ).length;
+
     const s = {
       success: 0,
       updated: 0,
+      totalSuccessful: 0,
+      invalid: invalidRowsCount,
+      duplicate: duplicateSkippedCount,
       skipped: rows.length - toProcess.length,
       failed: 0,
       total: rows.length,
@@ -514,11 +549,27 @@ export function BulkUpload({
     const fails: { name: string; error: string; file?: string }[] = [];
     const fileStatsMap: Record<
       string,
-      { name: string; success: number; updated: number; skipped: number; failed: number }
+      {
+        name: string;
+        success: number;
+        updated: number;
+        invalid: number;
+        duplicate: number;
+        skipped: number;
+        failed: number;
+      }
     > = {};
 
     uploadedFiles.forEach((f) => {
-      fileStatsMap[f.id] = { name: f.name, success: 0, updated: 0, skipped: 0, failed: 0 };
+      fileStatsMap[f.id] = {
+        name: f.name,
+        success: 0,
+        updated: 0,
+        invalid: 0,
+        duplicate: 0,
+        skipped: 0,
+        failed: 0,
+      };
     });
 
     const resultsList: {
@@ -527,17 +578,37 @@ export function BulkUpload({
       error?: string;
     }[] = [];
 
-    // Count skipped for each file and record in results list
+    // Count skipped, invalid, and duplicate for each file and record in results list
     rows.forEach((r) => {
-      if (r.skip || r.status === "invalid") {
-        const fid = r.sourceFileId;
+      const fid = r.sourceFileId;
+      if (r.status === "invalid") {
+        if (fid && fileStatsMap[fid]) {
+          fileStatsMap[fid].invalid++;
+          fileStatsMap[fid].skipped++;
+        }
+        resultsList.push({
+          row: r,
+          status: "skipped",
+          error: r.errors.length > 0 ? r.errors.join(", ") : "Invalid scheme data",
+        });
+      } else if (r.status === "duplicate" && (r.skip || duplicateHandling === "skip")) {
+        if (fid && fileStatsMap[fid]) {
+          fileStatsMap[fid].duplicate++;
+          fileStatsMap[fid].skipped++;
+        }
+        resultsList.push({
+          row: r,
+          status: "skipped",
+          error: "Duplicate scheme skipped",
+        });
+      } else if (r.skip) {
         if (fid && fileStatsMap[fid]) {
           fileStatsMap[fid].skipped++;
         }
         resultsList.push({
           row: r,
           status: "skipped",
-          error: r.status === "invalid" ? r.errors.join(", ") : "Skipped by user",
+          error: "Skipped by user",
         });
       }
     });
@@ -569,6 +640,7 @@ export function BulkUpload({
           }
           if (res.error) throw res.error;
           s.updated++;
+          s.totalSuccessful = s.success + s.updated;
           if (fid && fileStatsMap[fid]) fileStatsMap[fid].updated++;
           resultsList.push({ row: r, status: "updated" });
         } else {
@@ -580,6 +652,7 @@ export function BulkUpload({
           }
           if (res.error) throw res.error;
           s.success++;
+          s.totalSuccessful = s.success + s.updated;
           if (fid && fileStatsMap[fid]) fileStatsMap[fid].success++;
           resultsList.push({ row: r, status: "added" });
         }
@@ -623,10 +696,10 @@ export function BulkUpload({
       importedSchemes.length > 0
         ? importedSchemes
         : rows.map((r) => ({
-            row: r,
-            status: (r.skip || r.status === "invalid" ? "skipped" : "added") as
-              "added" | "updated" | "failed" | "skipped",
-          }));
+          row: r,
+          status: (r.skip || r.status === "invalid" ? "skipped" : "added") as
+            "added" | "updated" | "failed" | "skipped",
+        }));
 
     return baseList.filter((item) => {
       if (resultsFilterStatus !== "all" && item.status !== resultsFilterStatus) return false;
@@ -688,11 +761,10 @@ export function BulkUpload({
                 <button
                   type="button"
                   onClick={() => setStep("mapping")}
-                  className={`px-2 py-0.5 rounded transition-colors ${
-                    step === "mapping"
-                      ? "font-semibold text-primary bg-primary/10 border border-primary/20"
-                      : "hover:text-foreground hover:bg-muted"
-                  }`}
+                  className={`px-2 py-0.5 rounded transition-colors ${step === "mapping"
+                    ? "font-semibold text-primary bg-primary/10 border border-primary/20"
+                    : "hover:text-foreground hover:bg-muted"
+                    }`}
                 >
                   1. Column Mapping
                 </button>
@@ -701,13 +773,12 @@ export function BulkUpload({
                   type="button"
                   disabled={!canProceedToPreview}
                   onClick={() => setStep("preview")}
-                  className={`px-2 py-0.5 rounded transition-colors ${
-                    step === "preview"
-                      ? "font-semibold text-primary bg-primary/10 border border-primary/20"
-                      : canProceedToPreview
-                        ? "hover:text-foreground hover:bg-muted"
-                        : "opacity-40 cursor-not-allowed"
-                  }`}
+                  className={`px-2 py-0.5 rounded transition-colors ${step === "preview"
+                    ? "font-semibold text-primary bg-primary/10 border border-primary/20"
+                    : canProceedToPreview
+                      ? "hover:text-foreground hover:bg-muted"
+                      : "opacity-40 cursor-not-allowed"
+                    }`}
                 >
                   2. Preview & Validate
                 </button>
@@ -796,11 +867,10 @@ export function BulkUpload({
                       <div
                         key={f.id}
                         onClick={() => setActiveFileId(f.id)}
-                        className={`cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-all ${
-                          isActive
-                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                            : "bg-card text-foreground hover:bg-accent border-muted-foreground/20"
-                        }`}
+                        className={`cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-all ${isActive
+                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                          : "bg-card text-foreground hover:bg-accent border-muted-foreground/20"
+                          }`}
                         data-testid={`file-tab-${i}`}
                       >
                         <FileSpreadsheet
@@ -810,11 +880,10 @@ export function BulkUpload({
                           {f.name}
                         </span>
                         <span
-                          className={`text-[10px] px-1 rounded ${
-                            isActive
-                              ? "bg-white/20 text-primary-foreground"
-                              : "bg-muted text-muted-foreground"
-                          }`}
+                          className={`text-[10px] px-1 rounded ${isActive
+                            ? "bg-white/20 text-primary-foreground"
+                            : "bg-muted text-muted-foreground"
+                            }`}
                         >
                           {f.rawRows.length}
                         </span>
@@ -839,11 +908,10 @@ export function BulkUpload({
                               e.stopPropagation();
                               handleRemoveFile(f.id);
                             }}
-                            className={`p-0.5 rounded hover:bg-black/20 ${
-                              isActive
-                                ? "text-primary-foreground"
-                                : "text-muted-foreground hover:text-destructive"
-                            }`}
+                            className={`p-0.5 rounded hover:bg-black/20 ${isActive
+                              ? "text-primary-foreground"
+                              : "text-muted-foreground hover:text-destructive"
+                              }`}
                             title={`Remove ${f.name}`}
                           >
                             <X className="h-3 w-3" />
@@ -1065,11 +1133,10 @@ export function BulkUpload({
 
                             {isMapped && (
                               <span
-                                className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
-                                  isRequired
-                                    ? "bg-primary/10 text-primary border-primary/20"
-                                    : "bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/20"
-                                }`}
+                                className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${isRequired
+                                  ? "bg-primary/10 text-primary border-primary/20"
+                                  : "bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/20"
+                                  }`}
                               >
                                 <Check className="h-3 w-3 mr-0.5" />
                                 {isRequired ? "Required" : "Mapped"}
@@ -1111,22 +1178,20 @@ export function BulkUpload({
                 <button
                   type="button"
                   onClick={() => setFilterTab("all")}
-                  className={`px-2.5 py-1 rounded-md border transition-colors ${
-                    filterTab === "all"
-                      ? "bg-primary text-primary-foreground font-semibold"
-                      : "bg-card hover:bg-muted"
-                  }`}
+                  className={`px-2.5 py-1 rounded-md border transition-colors ${filterTab === "all"
+                    ? "bg-primary text-primary-foreground font-semibold"
+                    : "bg-card hover:bg-muted"
+                    }`}
                 >
                   All ({rows.length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setFilterTab("valid")}
-                  className={`px-2.5 py-1 rounded-md border transition-colors ${
-                    filterTab === "valid"
-                      ? "bg-green-600 text-white font-semibold"
-                      : "bg-card text-green-700 dark:text-green-300 hover:bg-muted"
-                  }`}
+                  className={`px-2.5 py-1 rounded-md border transition-colors ${filterTab === "valid"
+                    ? "bg-green-600 text-white font-semibold"
+                    : "bg-card text-green-700 dark:text-green-300 hover:bg-muted"
+                    }`}
                 >
                   Valid ({validCount})
                 </button>
@@ -1134,11 +1199,10 @@ export function BulkUpload({
                   <button
                     type="button"
                     onClick={() => setFilterTab("duplicate")}
-                    className={`px-2.5 py-1 rounded-md border transition-colors ${
-                      filterTab === "duplicate"
-                        ? "bg-amber-600 text-white font-semibold"
-                        : "bg-card text-amber-700 dark:text-amber-300 hover:bg-muted"
-                    }`}
+                    className={`px-2.5 py-1 rounded-md border transition-colors ${filterTab === "duplicate"
+                      ? "bg-amber-600 text-white font-semibold"
+                      : "bg-card text-amber-700 dark:text-amber-300 hover:bg-muted"
+                      }`}
                   >
                     Duplicates ({duplicateCount})
                   </button>
@@ -1147,11 +1211,10 @@ export function BulkUpload({
                   <button
                     type="button"
                     onClick={() => setFilterTab("invalid")}
-                    className={`px-2.5 py-1 rounded-md border transition-colors ${
-                      filterTab === "invalid"
-                        ? "bg-destructive text-destructive-foreground font-semibold"
-                        : "bg-card text-destructive hover:bg-muted"
-                    }`}
+                    className={`px-2.5 py-1 rounded-md border transition-colors ${filterTab === "invalid"
+                      ? "bg-destructive text-destructive-foreground font-semibold"
+                      : "bg-card text-destructive hover:bg-muted"
+                      }`}
                   >
                     Errors ({invalidCount})
                   </button>
@@ -1257,13 +1320,12 @@ export function BulkUpload({
                     return (
                       <tr
                         key={r.id}
-                        className={`hover:bg-accent/30 transition-colors ${
-                          r.skip
-                            ? "opacity-50 bg-muted/20"
-                            : r.status === "invalid"
-                              ? "bg-red-500/5"
-                              : ""
-                        }`}
+                        className={`hover:bg-accent/30 transition-colors ${r.skip
+                          ? "opacity-50 bg-muted/20"
+                          : r.status === "invalid"
+                            ? "bg-red-500/5"
+                            : ""
+                          }`}
                       >
                         {/* Skip checkbox */}
                         <td className="p-2 text-center">
@@ -1545,7 +1607,8 @@ export function BulkUpload({
               </span>
               <span className="text-primary/30">•</span>
               <span>
-                Uploaded: <b>{currentImportIndex}</b> of <b>{totalImportCount || willImportCount}</b>
+                Uploaded: <b>{currentImportIndex}</b> of{" "}
+                <b>{totalImportCount || willImportCount}</b>
               </span>
             </div>
 
@@ -1579,7 +1642,8 @@ export function BulkUpload({
               <div className="flex justify-between text-[11px] text-muted-foreground">
                 <span>Valid schemes importing</span>
                 <span>
-                  {Math.max(0, (totalImportCount || willImportCount) - currentImportIndex)} remaining
+                  {Math.max(0, (totalImportCount || willImportCount) - currentImportIndex)}{" "}
+                  remaining
                 </span>
               </div>
             </div>
@@ -1666,16 +1730,24 @@ export function BulkUpload({
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-green-600 font-semibold">{stats.success} added</span>
-                    {stats.updated > 0 && (
-                      <span className="text-primary font-semibold">{stats.updated} updated</span>
+                  <div className="flex items-center gap-2 text-xs flex-wrap">
+                    <span className="text-green-600 font-semibold">
+                      {stats.success + stats.updated} successfully uploaded
+                    </span>
+                    {stats.invalid > 0 && (
+                      <span className="text-destructive font-medium">
+                        {stats.invalid} invalid
+                      </span>
                     )}
-                    {stats.skipped > 0 && (
-                      <span className="text-amber-600 font-medium">{stats.skipped} skipped</span>
+                    {stats.duplicate > 0 && (
+                      <span className="text-amber-600 font-medium">
+                        {stats.duplicate} duplicate
+                      </span>
                     )}
                     {stats.failed > 0 && (
-                      <span className="text-destructive font-medium">{stats.failed} failed</span>
+                      <span className="text-destructive font-medium">
+                        {stats.failed} failed
+                      </span>
                     )}
                   </div>
                 </div>
@@ -1700,23 +1772,61 @@ export function BulkUpload({
                     </div>
                   </div>
 
-                  {/* Summary Metric Cards */}
+                  {/* Summary Metric Cards: Separate categories */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    <div className="p-2.5 border rounded-lg bg-card text-center">
-                      <p className="text-xl font-bold text-green-600">{stats.success}</p>
-                      <p className="text-[11px] text-muted-foreground font-medium">Schemes Added</p>
+                    <div
+                      className="p-2.5 border rounded-lg bg-card text-center shadow-xs hover:border-green-500/40 transition-colors"
+                      data-testid="stat-card-successful"
+                    >
+                      <p className="text-xl font-bold text-green-600">
+                        {stats.success + stats.updated}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground font-semibold">
+                        Successfully Uploaded
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        <span>Schemes Added</span>: <b>{stats.success}</b>
+                        {stats.updated > 0 ? `, Updated: ${stats.updated}` : ""}
+                      </p>
                     </div>
-                    <div className="p-2.5 border rounded-lg bg-card text-center">
-                      <p className="text-xl font-bold text-primary">{stats.updated}</p>
-                      <p className="text-[11px] text-muted-foreground font-medium">Updated</p>
+
+                    <div
+                      className="p-2.5 border rounded-lg bg-card text-center shadow-xs hover:border-destructive/40 transition-colors"
+                      data-testid="stat-card-invalid"
+                    >
+                      <p className="text-xl font-bold text-destructive">{stats.invalid}</p>
+                      <p className="text-[11px] text-muted-foreground font-semibold">
+                        Invalid Records
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Failed validation / empty
+                      </p>
                     </div>
-                    <div className="p-2.5 border rounded-lg bg-card text-center">
-                      <p className="text-xl font-bold text-amber-600">{stats.skipped}</p>
-                      <p className="text-[11px] text-muted-foreground font-medium">Skipped</p>
+
+                    <div
+                      className="p-2.5 border rounded-lg bg-card text-center shadow-xs hover:border-amber-500/40 transition-colors"
+                      data-testid="stat-card-duplicates"
+                    >
+                      <p className="text-xl font-bold text-amber-600">{stats.duplicate}</p>
+                      <p className="text-[11px] text-muted-foreground font-semibold">
+                        Duplicate Records
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Skipped duplicates
+                      </p>
                     </div>
-                    <div className="p-2.5 border rounded-lg bg-card text-center">
+
+                    <div
+                      className="p-2.5 border rounded-lg bg-card text-center shadow-xs hover:border-destructive/40 transition-colors"
+                      data-testid="stat-card-failed"
+                    >
                       <p className="text-xl font-bold text-destructive">{stats.failed}</p>
-                      <p className="text-[11px] text-muted-foreground font-medium">Failed</p>
+                      <p className="text-[11px] text-muted-foreground font-semibold">
+                        Failed Records
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Database save errors
+                      </p>
                     </div>
                   </div>
 
@@ -1730,15 +1840,17 @@ export function BulkUpload({
                       {(perFileStats.length > 0
                         ? perFileStats
                         : (uploadedFiles.length > 0
-                            ? uploadedFiles
-                            : [{ name: fileName || "uploaded_file.csv" }]
-                          ).map((f) => ({
-                            name: f.name,
-                            success: stats.success,
-                            updated: stats.updated,
-                            skipped: stats.skipped,
-                            failed: stats.failed,
-                          }))
+                          ? uploadedFiles
+                          : [{ name: fileName || "uploaded_file.csv" }]
+                        ).map((f) => ({
+                          name: f.name,
+                          success: stats.success,
+                          updated: stats.updated,
+                          invalid: stats.invalid,
+                          duplicate: stats.duplicate,
+                          skipped: stats.skipped,
+                          failed: stats.failed,
+                        }))
                       ).map((fs, idx) => (
                         <div
                           key={idx}
@@ -1751,14 +1863,21 @@ export function BulkUpload({
                             </span>
                           </div>
                           <div className="flex items-center gap-2.5 shrink-0 text-xs">
-                            <span className="text-green-600 font-semibold">{fs.success} added</span>
-                            {fs.updated > 0 && (
+                            <span className="text-green-600 font-semibold">
+                              {fs.success} added
+                            </span>
+                            {(fs.updated || 0) > 0 && (
                               <span className="text-primary font-semibold">
                                 {fs.updated} updated
                               </span>
                             )}
-                            {fs.skipped > 0 && (
-                              <span className="text-amber-600">{fs.skipped} skipped</span>
+                            {(fs.invalid || 0) > 0 && (
+                              <span className="text-destructive font-medium">
+                                {fs.invalid} invalid
+                              </span>
+                            )}
+                            {(fs.duplicate || 0) > 0 && (
+                              <span className="text-amber-600">{fs.duplicate} duplicate</span>
                             )}
                             {fs.failed > 0 && (
                               <span className="text-destructive font-semibold">
@@ -1843,11 +1962,10 @@ export function BulkUpload({
                       type="button"
                       data-testid="filter-tab-all"
                       onClick={() => setResultsFilterStatus("all")}
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                        resultsFilterStatus === "all"
-                          ? "bg-primary text-primary-foreground shadow-xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${resultsFilterStatus === "all"
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                        }`}
                     >
                       All
                     </button>
@@ -1856,11 +1974,10 @@ export function BulkUpload({
                         type="button"
                         data-testid="filter-tab-added"
                         onClick={() => setResultsFilterStatus("added")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                          resultsFilterStatus === "added"
-                            ? "bg-green-600 text-white shadow-xs"
-                            : "text-green-700 dark:text-green-300 hover:bg-muted"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${resultsFilterStatus === "added"
+                          ? "bg-green-600 text-white shadow-xs"
+                          : "text-green-700 dark:text-green-300 hover:bg-muted"
+                          }`}
                       >
                         Added ({stats.success})
                       </button>
@@ -1870,11 +1987,10 @@ export function BulkUpload({
                         type="button"
                         data-testid="filter-tab-updated"
                         onClick={() => setResultsFilterStatus("updated")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                          resultsFilterStatus === "updated"
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "text-primary hover:bg-muted"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${resultsFilterStatus === "updated"
+                          ? "bg-primary text-primary-foreground shadow-xs"
+                          : "text-primary hover:bg-muted"
+                          }`}
                       >
                         Updated ({stats.updated})
                       </button>
@@ -1884,11 +2000,10 @@ export function BulkUpload({
                         type="button"
                         data-testid="filter-tab-skipped"
                         onClick={() => setResultsFilterStatus("skipped")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                          resultsFilterStatus === "skipped"
-                            ? "bg-amber-600 text-white shadow-xs"
-                            : "text-amber-700 dark:text-amber-300 hover:bg-muted"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${resultsFilterStatus === "skipped"
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "text-amber-700 dark:text-amber-300 hover:bg-muted"
+                          }`}
                       >
                         Skipped ({stats.skipped + stats.failed})
                       </button>
@@ -1901,11 +2016,10 @@ export function BulkUpload({
                       type="button"
                       data-testid="view-cards-btn"
                       onClick={() => setResultsViewMode("cards")}
-                      className={`p-1 rounded transition-colors ${
-                        resultsViewMode === "cards"
-                          ? "bg-background text-foreground shadow-xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
+                      className={`p-1 rounded transition-colors ${resultsViewMode === "cards"
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                        }`}
                       title="Cards View"
                     >
                       <LayoutGrid className="h-3.5 w-3.5" />
@@ -1914,11 +2028,10 @@ export function BulkUpload({
                       type="button"
                       data-testid="view-rows-btn"
                       onClick={() => setResultsViewMode("rows")}
-                      className={`p-1 rounded transition-colors ${
-                        resultsViewMode === "rows"
-                          ? "bg-background text-foreground shadow-xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
+                      className={`p-1 rounded transition-colors ${resultsViewMode === "rows"
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                        }`}
                       title="Rows / Table View"
                     >
                       <List className="h-3.5 w-3.5" />
@@ -1961,15 +2074,14 @@ export function BulkUpload({
                             <div className="flex items-center justify-between gap-1.5 mb-1.5">
                               <Badge
                                 variant="outline"
-                                className={`text-[10px] font-semibold px-1.5 py-0 ${
-                                  isAdded
-                                    ? "bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/30"
-                                    : isUpdated
-                                      ? "bg-primary/10 text-primary border-primary/30"
-                                      : isSkipped
-                                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                        : "bg-destructive/10 text-destructive border-destructive/30"
-                                }`}
+                                className={`text-[10px] font-semibold px-1.5 py-0 ${isAdded
+                                  ? "bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/30"
+                                  : isUpdated
+                                    ? "bg-primary/10 text-primary border-primary/30"
+                                    : isSkipped
+                                      ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                      : "bg-destructive/10 text-destructive border-destructive/30"
+                                  }`}
                               >
                                 {isAdded
                                   ? "Added"
@@ -2080,15 +2192,14 @@ export function BulkUpload({
                               <td className="p-2">
                                 <Badge
                                   variant="outline"
-                                  className={`text-[10px] px-1.5 py-0 ${
-                                    isAdded
-                                      ? "bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/30"
-                                      : isUpdated
-                                        ? "bg-primary/10 text-primary border-primary/30"
-                                        : isSkipped
-                                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                          : "bg-destructive/10 text-destructive border-destructive/30"
-                                  }`}
+                                  className={`text-[10px] px-1.5 py-0 ${isAdded
+                                    ? "bg-green-500/10 text-green-700 dark:text-green-300 border-green-500/30"
+                                    : isUpdated
+                                      ? "bg-primary/10 text-primary border-primary/30"
+                                      : isSkipped
+                                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                        : "bg-destructive/10 text-destructive border-destructive/30"
+                                    }`}
                                 >
                                   {isAdded
                                     ? "Added"
@@ -2137,9 +2248,15 @@ export function BulkUpload({
             {/* Bottom Actions Bar */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 mt-2 border-t shrink-0 text-xs text-muted-foreground">
               <div>
-                Processed <b>{stats.success + stats.updated}</b> schemes across{" "}
+                Successfully uploaded <b>{stats.success + stats.updated}</b> valid schemes across{" "}
                 <b>{uploadedFiles.length > 0 ? uploadedFiles.length : 1}</b>{" "}
                 {uploadedFiles.length === 1 || uploadedFiles.length === 0 ? "file" : "files"}
+                {stats.invalid + stats.duplicate + stats.failed > 0 && (
+                  <span className="ml-1 text-muted-foreground/80">
+                    ({stats.invalid} invalid, {stats.duplicate} duplicate, {stats.failed} failed
+                    excluded)
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={reset}>

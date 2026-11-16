@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
 import { useIsAdmin, useSchemes } from "@/hooks/use-app-data";
+import { useSchemesCount } from "@/hooks/use-schemes-count";
 import { useAllAgentProfiles } from "@/hooks/use-agent-data";
 import type { Eligibility, Scheme } from "@/lib/matching";
 import { getSchemeVideo, isYouTubeUrl } from "@/lib/video-helpers";
@@ -138,6 +139,8 @@ function Chips({
 function Admin() {
   const { data: isAdmin, isLoading } = useIsAdmin();
   const { data: schemes } = useSchemes();
+  const schemesCountQuery = useSchemesCount();
+  const exactCount = schemesCountQuery?.data;
   const qc = useQueryClient();
 
   // Dialog and form state
@@ -384,8 +387,30 @@ function Admin() {
     }
   };
 
+  // Ensure only valid, active, non-empty, and deduplicated database records are counted
+  const validSchemes = useMemo(() => {
+    if (!schemes) return [];
+    const seenIds = new Set<string>();
+    return schemes.filter((s) => {
+      if (!s || !s.id) return false;
+      const name = typeof s.name === "string" ? s.name.trim() : "";
+      if (!name) return false; // Exclude empty records / rows without name
+
+      const rec = s as Record<string, unknown>;
+      // If soft-deleted schemes exist, exclude them from the active total
+      if (rec["is_deleted"] === true || rec["deleted_at"] || rec["status"] === "deleted") {
+        return false;
+      }
+
+      // Avoid counting the same scheme multiple times
+      if (seenIds.has(s.id)) return false;
+      seenIds.add(s.id);
+      return true;
+    });
+  }, [schemes]);
+
   // Filter schemes based on search, category, and level
-  const displayedSchemes = (schemes ?? []).filter((s) => {
+  const displayedSchemes = validSchemes.filter((s) => {
     const matchesSearch =
       !searchTerm ||
       `${s.name} ${s.description} ${s.ministry} ${s.benefits}`
@@ -401,10 +426,10 @@ function Admin() {
     setCurrentPage(1);
   }, [searchTerm, selectedCategory, selectedLevel]);
 
-  const totalSchemesUploaded = schemes?.length ?? 0;
-  const centralSchemesCount = (schemes ?? []).filter((s) => s.level === "Central").length;
-  const stateSchemesCount = (schemes ?? []).filter((s) => s.level === "State").length;
-  const categoriesCount = new Set((schemes ?? []).map((s) => s.category)).size;
+  const totalSchemesUploaded = typeof exactCount === "number" ? exactCount : validSchemes.length;
+  const centralSchemesCount = validSchemes.filter((s) => s.level === "Central").length;
+  const stateSchemesCount = validSchemes.filter((s) => s.level === "State").length;
+  const categoriesCount = new Set(validSchemes.map((s) => s.category)).size;
   const totalSchemes = displayedSchemes.length;
   const totalPages = Math.max(1, Math.ceil(totalSchemes / pageSize));
 
@@ -508,6 +533,11 @@ function Admin() {
           const deletedSet = new Set(deletedIds);
           return old.filter((s) => !deletedSet.has(s.id));
         });
+        qc.setQueryData(["schemes", "count"], (oldCount: number | undefined) => {
+          return typeof oldCount === "number"
+            ? Math.max(0, oldCount - deletedIds.length)
+            : undefined;
+        });
         await qc.invalidateQueries({ queryKey: ["schemes"] });
         await qc.refetchQueries({ queryKey: ["schemes"] });
       }
@@ -546,6 +576,28 @@ function Admin() {
       const res = await supabase.from("schemes").select("id");
       if (res && Array.isArray(res.data) && res.data.length > 0) {
         dbIds = res.data.map((s: { id: string }) => s.id);
+        if (res.data.length === 1000) {
+          let from = 1000;
+          while (true) {
+            try {
+              const query = supabase.from("schemes").select("id");
+              const rangeQuery = query as unknown as {
+                range?: (
+                  from: number,
+                  to: number,
+                ) => Promise<{ data: { id: string }[] | null; error: unknown }>;
+              };
+              if (typeof rangeQuery.range !== "function") break;
+              const nextRes = await rangeQuery.range(from, from + 999);
+              if (nextRes.error || !nextRes.data || nextRes.data.length === 0) break;
+              dbIds = dbIds.concat(nextRes.data.map((s: { id: string }) => s.id));
+              if (nextRes.data.length < 1000) break;
+              from += 1000;
+            } catch {
+              break;
+            }
+          }
+        }
       }
     } catch (e) {
       console.warn("Direct DB scheme fetch error:", e);
@@ -609,6 +661,7 @@ function Admin() {
       setSelectedIds(new Set());
       // Explicitly clear query cache so the total schemes uploaded count immediately drops to 0
       qc.setQueryData(["schemes"], []);
+      qc.setQueryData(["schemes", "count"], 0);
       await qc.invalidateQueries({ queryKey: ["schemes"] });
       await qc.refetchQueries({ queryKey: ["schemes"] });
 
@@ -666,6 +719,9 @@ function Admin() {
         if (!old) return [];
         return old.filter((s) => s.id !== id);
       });
+      qc.setQueryData(["schemes", "count"], (oldCount: number | undefined) => {
+        return typeof oldCount === "number" ? Math.max(0, oldCount - 1) : undefined;
+      });
       await qc.invalidateQueries({ queryKey: ["schemes"] });
       await qc.refetchQueries({ queryKey: ["schemes"] });
     } catch (err: unknown) {
@@ -698,7 +754,7 @@ function Admin() {
           }`}
         >
           <Library className="h-4 w-4" />
-          Schemes Management ({totalSchemesUploaded})
+          Schemes Management ({totalSchemesUploaded.toLocaleString()})
         </button>
         <button
           type="button"
@@ -725,7 +781,7 @@ function Admin() {
         <>
           <PageHeader
             title="Admin · Schemes"
-            subtitle={`${totalSchemesUploaded} schemes uploaded in database`}
+            subtitle={`${totalSchemesUploaded.toLocaleString()} schemes uploaded in database`}
             action={
               <div className="flex flex-wrap items-center gap-2">
                 {selectedIds.size > 0 ? (
@@ -746,7 +802,7 @@ function Admin() {
                       data-testid="header-delete-all-button"
                     >
                       <Trash2 className="h-4 w-4" />
-                      Delete All Schemes ({totalSchemesUploaded})
+                      Delete All Schemes ({totalSchemesUploaded.toLocaleString()})
                     </Button>
                   </>
                 ) : (
@@ -769,7 +825,7 @@ function Admin() {
                   </a>
                 </Button>
                 <BulkUpload
-                  existingSchemes={schemes ?? []}
+                  existingSchemes={validSchemes}
                   onUploadComplete={async () => {
                     await qc.invalidateQueries({ queryKey: ["schemes"] });
                     await qc.refetchQueries({ queryKey: ["schemes"] });
@@ -799,7 +855,7 @@ function Admin() {
                 className="mt-2 text-2xl font-extrabold text-foreground"
                 data-testid="total-schemes-uploaded-count"
               >
-                {totalSchemesUploaded}
+                {totalSchemesUploaded.toLocaleString()}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Total active welfare schemes in database
@@ -936,7 +992,7 @@ function Admin() {
                   data-testid="bulk-delete-all-button"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  Delete All Schemes ({totalSchemesUploaded})
+                  Delete All Schemes ({totalSchemesUploaded.toLocaleString()})
                 </Button>
               </div>
             </div>
@@ -1053,7 +1109,7 @@ function Admin() {
                 <span data-testid="pagination-summary">
                   Showing <b>{totalSchemes === 0 ? 0 : startIndex + 1}</b>–<b>{endIndex}</b> of{" "}
                   <b>{totalSchemes}</b> schemes (Total schemes uploaded:{" "}
-                  <b>{totalSchemesUploaded}</b>)
+                  <b>{totalSchemesUploaded.toLocaleString()}</b>)
                 </span>
                 <span className="text-muted-foreground/40">|</span>
                 <div className="flex items-center gap-1.5">
@@ -1162,7 +1218,7 @@ function Admin() {
                   <div className="space-y-2 text-sm text-muted-foreground">
                     <p>
                       Are you sure you want to permanently delete{" "}
-                      <b>ALL {totalSchemesUploaded} schemes</b> from the database?
+                      <b>ALL {totalSchemesUploaded.toLocaleString()} schemes</b> from the database?
                     </p>
                     <div className="text-xs text-destructive font-medium bg-destructive/10 p-2.5 rounded border border-destructive/20">
                       Warning: This action is permanent and cannot be undone. All scheme records,
@@ -1190,7 +1246,7 @@ function Admin() {
                   ) : (
                     <>
                       <Trash2 className="h-4 w-4" />
-                      Delete All {totalSchemesUploaded} Schemes
+                      Delete All {totalSchemesUploaded.toLocaleString()} Schemes
                     </>
                   )}
                 </AlertDialogAction>

@@ -438,8 +438,12 @@ describe("Multiple Bulk Data Upload Tests", () => {
     // Verify importing step shows total valid schemes count and uploaded indicator
     expect(screen.getByText(/Importing Schemes to Database/i)).toBeInTheDocument();
     expect(screen.getByTestId("importing-schemes-count")).toBeInTheDocument();
-    expect(screen.getByTestId("importing-schemes-count")).toHaveTextContent("Total Valid Schemes: 3");
-    expect(screen.getByTestId("importing-uploaded-count-label")).toHaveTextContent("Schemes Uploaded:");
+    expect(screen.getByTestId("importing-schemes-count")).toHaveTextContent(
+      "Total Valid Schemes: 3",
+    );
+    expect(screen.getByTestId("importing-uploaded-count-label")).toHaveTextContent(
+      "Schemes Uploaded:",
+    );
 
     await waitFor(() => {
       expect(screen.getByText(/Import Process Finished/i)).toBeInTheDocument();
