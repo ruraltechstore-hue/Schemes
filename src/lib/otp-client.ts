@@ -21,56 +21,72 @@ export interface VerifyOtpResponse {
   error?: string;
 }
 
+const inFlightOtpRequests = new Map<string, Promise<SendOtpResponse>>();
+
 /**
- * Request server to generate and send a 6-digit OTP via Resend API
+ * Request server to generate and send a 6-digit OTP via Resend API.
+ * Includes in-flight deduplication to ensure exactly one email per request.
  */
 export async function sendOtpRequest(email: string, name: string): Promise<SendOtpResponse> {
-  try {
-    const res = await fetch("/api/send-otp", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), name: name.trim() }),
-    });
+  const normalized = email.trim().toLowerCase();
 
-    // On static deployments (e.g. Vercel SPA / Lovable), there is no Node backend.
-    // Vercel returns 404 or 405 (Method Not Allowed when POSTing to rewritten index.html).
-    // Supabase Auth signUp already sent the 6-digit verification code to the user!
-    if (res.status === 404 || res.status === 405 || !res.ok) {
+  // Deduplicate concurrent in-flight requests for the exact same email
+  const existing = inFlightOtpRequests.get(normalized);
+  if (existing) {
+    return existing;
+  }
+
+  const p = (async (): Promise<SendOtpResponse> => {
+    try {
+      const res = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalized, name: name.trim() }),
+      });
+
+      // On static deployments (e.g. Vercel SPA / Lovable), there is no Node backend.
+      // Vercel returns 404 or 405 (Method Not Allowed when POSTing to rewritten index.html).
+      if (res.status === 404 || res.status === 405) {
+        return {
+          success: true,
+          message: "Verification code sent to your email",
+          cooldownSeconds: 60,
+          expiresInSeconds: 300,
+        };
+      }
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.success) {
+        return {
+          success: false,
+          message: data?.message || data?.error || "Failed to send OTP",
+          error: data?.error || data?.message || "Failed to send OTP",
+          cooldownSeconds: data?.cooldownSeconds,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message || "Verification code sent to your email",
+        cooldownSeconds: data.cooldownSeconds ?? 60,
+        expiresInSeconds: data.expiresInSeconds ?? 300,
+        resendId: data.resendId,
+      };
+    } catch (err: any) {
       return {
         success: true,
         message: "Verification code sent to your email",
         cooldownSeconds: 60,
         expiresInSeconds: 300,
       };
+    } finally {
+      inFlightOtpRequests.delete(normalized);
     }
+  })();
 
-    const data = await res.json().catch(() => null);
-
-    if (!data?.success) {
-      return {
-        success: false,
-        message: data?.message || data?.error || "Failed to send OTP",
-        error: data?.error || data?.message || "Failed to send OTP",
-        cooldownSeconds: data?.cooldownSeconds,
-      };
-    }
-
-    return {
-      success: true,
-      message: data.message || "Verification code sent to your email",
-      cooldownSeconds: data.cooldownSeconds ?? 60,
-      expiresInSeconds: data.expiresInSeconds ?? 300,
-      resendId: data.resendId,
-    };
-  } catch (err: any) {
-    // In pure client-side SPA environments where fetch fails, Supabase Auth signUp handles email dispatch
-    return {
-      success: true,
-      message: "Verification code sent to your email",
-      cooldownSeconds: 60,
-      expiresInSeconds: 300,
-    };
-  }
+  inFlightOtpRequests.set(normalized, p);
+  return p;
 }
 
 /**
@@ -120,7 +136,7 @@ export async function verifyOtpRequest(email: string, otp: string): Promise<Veri
 }
 
 /**
- * Notify Administrator of newly verified agent awaiting approval
+ * Notify Administrator and assigned Sub-Admin of newly verified agent awaiting approval
  */
 export async function notifyAdminApprovalRequest(agentDetails: {
   id?: string;
@@ -131,6 +147,10 @@ export async function notifyAdminApprovalRequest(agentDetails: {
   address?: string;
   state?: string;
   district?: string;
+  subAdminId?: string;
+  subAdminName?: string;
+  subAdminEmail?: string;
+  organizationName?: string;
 }): Promise<{ success: boolean; message?: string }> {
   try {
     const res = await fetch("/api/notify-admin-registration", {

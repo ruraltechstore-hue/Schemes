@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -25,6 +26,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { BulkUpload } from "@/components/BulkUpload";
 import { AdminVideoUploader } from "@/components/AdminVideoUploader";
 import { AdminAgentManagement } from "@/components/AdminAgentManagement";
+import { AdminSubAdminManagement } from "@/components/AdminSubAdminManagement";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,7 +55,7 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { useIsAdmin, useSchemes } from "@/hooks/use-app-data";
 import { useSchemesCount } from "@/hooks/use-schemes-count";
-import { useAllAgentProfiles } from "@/hooks/use-agent-data";
+import { useAllAgentProfiles, useAllSubAdmins } from "@/hooks/use-agent-data";
 import type { Eligibility, Scheme } from "@/lib/matching";
 import { getSchemeVideo, isYouTubeUrl } from "@/lib/video-helpers";
 import {
@@ -106,6 +108,14 @@ function getErrorMessage(err: unknown, fallback = "Unknown error"): string {
   return String(err);
 }
 
+function useSafeLocation() {
+  try {
+    return useLocation();
+  } catch {
+    return { search: typeof window !== "undefined" ? window.location?.search || "" : "" };
+  }
+}
+
 function Chips({
   options,
   value,
@@ -123,11 +133,10 @@ function Chips({
           type="button"
           key={o}
           onClick={() => onChange(v.includes(o) ? v.filter((x) => x !== o) : [...v, o])}
-          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-            v.includes(o)
-              ? "border-primary bg-primary text-primary-foreground font-medium"
-              : "bg-card hover:bg-muted"
-          }`}
+          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${v.includes(o)
+            ? "border-primary bg-primary text-primary-foreground font-medium"
+            : "bg-card hover:bg-muted"
+            }`}
         >
           {o}
         </button>
@@ -186,15 +195,27 @@ function Admin() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Tab navigation state for Schemes vs Agents (defaults to schemes, reads ?tab=agents if available)
-  const [currentTab, setCurrentTab] = useState<"schemes" | "agents">(() => {
-    if (typeof window !== "undefined" && window.location?.search?.includes("tab=agents")) {
-      return "agents";
-    }
+  // Tab navigation state for Schemes vs Agents vs Sub-Admins
+  const location = useSafeLocation();
+  const { data: allAgents = [] } = useAllAgentProfiles();
+  const { data: allSubAdmins = [] } = useAllSubAdmins();
+  const pendingAgentCount = allAgents.filter((a) => a.status === "pending").length;
+
+  const [currentTab, setCurrentTab] = useState<"schemes" | "agents" | "subadmins">(() => {
+    const search = location?.search || (typeof window !== "undefined" ? window.location?.search || "" : "");
+    if (search.includes("tab=subadmins")) return "subadmins";
+    if (search.includes("tab=agents")) return "agents";
     return "schemes";
   });
-  const { data: allAgents = [] } = useAllAgentProfiles();
-  const pendingAgentCount = allAgents.filter((a) => a.status === "pending").length;
+
+  useEffect(() => {
+    const search = location?.search || (typeof window !== "undefined" ? window.location?.search || "" : "");
+    if (search.includes("tab=subadmins")) {
+      setCurrentTab("subadmins");
+    } else if (search.includes("tab=agents")) {
+      setCurrentTab("agents");
+    }
+  }, [location?.search]);
 
   const e = f?.eligibility ?? {};
 
@@ -356,9 +377,9 @@ function Admin() {
     try {
       let res = id
         ? await supabase
-            .from("schemes")
-            .update(rowToSave as never)
-            .eq("id", id)
+          .from("schemes")
+          .update(rowToSave as never)
+          .eq("id", id)
         : await supabase.from("schemes").insert(rowToSave as never);
 
       // Fallback if dedicated video columns are not yet cached by PostgREST
@@ -366,9 +387,9 @@ function Admin() {
         const { application_video_url, video_type, ...fallbackRow } = rowToSave;
         res = id
           ? await supabase
-              .from("schemes")
-              .update(fallbackRow as never)
-              .eq("id", id)
+            .from("schemes")
+            .update(fallbackRow as never)
+            .eq("id", id)
           : await supabase.from("schemes").insert(fallbackRow as never);
       }
 
@@ -742,28 +763,37 @@ function Admin() {
 
   return (
     <div>
-      {/* Admin Section Tabs: Schemes Management vs Agent Management */}
-      <div className="mb-6 flex items-center gap-2 border-b">
+      {/* Admin Section Tabs: Schemes Management vs Sub-Admin Management vs Agent Management */}
+      <div className="mb-6 flex flex-wrap items-center gap-2 border-b">
         <button
           type="button"
           onClick={() => setCurrentTab("schemes")}
-          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${
-            currentTab === "schemes"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${currentTab === "schemes"
+            ? "border-primary text-primary"
+            : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
         >
           <Library className="h-4 w-4" />
           Schemes Management ({totalSchemesUploaded.toLocaleString()})
         </button>
         <button
           type="button"
+          onClick={() => setCurrentTab("subadmins")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${currentTab === "subadmins"
+            ? "border-primary text-primary"
+            : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+        >
+          <Building2 className="h-4 w-4" />
+          Sub-Admin Management ({allSubAdmins.length})
+        </button>
+        <button
+          type="button"
           onClick={() => setCurrentTab("agents")}
-          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${
-            currentTab === "agents"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition-colors ${currentTab === "agents"
+            ? "border-primary text-primary"
+            : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
         >
           <Users className="h-4 w-4" />
           Agent Management
@@ -775,7 +805,9 @@ function Admin() {
         </button>
       </div>
 
-      {currentTab === "agents" ? (
+      {currentTab === "subadmins" ? (
+        <AdminSubAdminManagement />
+      ) : currentTab === "agents" ? (
         <AdminAgentManagement />
       ) : (
         <>
@@ -1039,9 +1071,8 @@ function Admin() {
                     return (
                       <tr
                         key={s.id}
-                        className={`border-t transition-colors ${
-                          isSelected ? "bg-muted/60" : "hover:bg-muted/40"
-                        }`}
+                        className={`border-t transition-colors ${isSelected ? "bg-muted/60" : "hover:bg-muted/40"
+                          }`}
                       >
                         <td className="p-3 w-10">
                           <Checkbox

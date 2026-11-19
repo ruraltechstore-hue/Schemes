@@ -296,3 +296,134 @@ export function useBeneficiaryCheckHistory(userId?: string) {
     },
   });
 }
+
+export function useAllSubAdmins() {
+  return useQuery({
+    queryKey: ["allSubAdmins"],
+    queryFn: async () => {
+      try {
+        if (typeof supabase?.from !== "function") return [];
+        const fromRes = supabase.from("sub_admin_profiles");
+        if (typeof fromRes?.select !== "function") return [];
+        const query = fromRes.select("*");
+        const res = typeof (query as any)?.order === "function"
+          ? await (query as any).order("created_at", { ascending: false })
+          : await query;
+
+        if (res?.error) {
+          console.warn("Error fetching all sub-admins:", res.error);
+          return [];
+        }
+        return res?.data || [];
+      } catch (err) {
+        console.warn("Failed to fetch sub-admins:", err);
+        return [];
+      }
+    },
+  });
+}
+
+export function useActiveSubAdmins() {
+  return useQuery({
+    queryKey: ["activeSubAdmins"],
+    queryFn: async () => {
+      try {
+        if (typeof supabase?.from !== "function") return [];
+        const fromRes = supabase.from("sub_admin_profiles");
+        if (typeof fromRes?.select !== "function") return [];
+        const query = fromRes.select("id, full_name, email, organization_name, designation, avatar_url, is_active");
+        const filtered = typeof (query as any)?.eq === "function" ? (query as any).eq("is_active", true) : query;
+        const res = typeof (filtered as any)?.order === "function"
+          ? await (filtered as any).order("organization_name", { ascending: true })
+          : await filtered;
+
+        if (res?.error) {
+          console.warn("Error fetching active sub-admins:", res.error);
+          return [];
+        }
+        return res?.data || [];
+      } catch (err) {
+        console.warn("Failed to fetch active sub-admins:", err);
+        return [];
+      }
+    },
+  });
+}
+
+export function useSubAdminAgents(subAdminId?: string) {
+  return useQuery({
+    queryKey: ["subAdminAgents", subAdminId],
+    enabled: !!subAdminId,
+    queryFn: async () => {
+      if (!subAdminId) return [];
+      try {
+        const { data, error } = await supabase
+          .from("agent_profiles")
+          .select("*")
+          .eq("sub_admin_id", subAdminId)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.warn("Error fetching sub-admin agents:", error);
+          return [];
+        }
+        return data || [];
+      } catch (err) {
+        console.warn("Failed to fetch sub-admin agents:", err);
+        return [];
+      }
+    },
+  });
+}
+
+export function useSubAdminApprovalHistory(agentId?: string, subAdminId?: string) {
+  return useQuery({
+    queryKey: ["subAdminApprovalHistory", agentId, subAdminId],
+    queryFn: async () => {
+      try {
+        let query = supabase.from("agent_approval_history").select("*");
+        if (agentId) query = query.eq("agent_id", agentId);
+        if (subAdminId) query = query.eq("sub_admin_id", subAdminId);
+
+        const { data, error } = await query.order("created_at", { ascending: false });
+        if (error) {
+          console.warn("Error fetching approval history:", error);
+          return [];
+        }
+        return data || [];
+      } catch (err) {
+        console.warn("Failed to fetch approval history:", err);
+        return [];
+      }
+    },
+  });
+}
+
+export function useNotifications(userId?: string) {
+  const { data: user } = useUser();
+  const id = userId || user?.id;
+
+  return useQuery({
+    queryKey: ["notifications", id],
+    enabled: !!id,
+    queryFn: async () => {
+      if (!id) return [];
+      try {
+        const { data, error } = await supabase
+          .from("notifications")
+          .select("*")
+          .eq("user_id", id)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.warn("Error fetching notifications:", error);
+          return [];
+        }
+        return data || [];
+      } catch (err) {
+        console.warn("Failed to fetch notifications:", err);
+        return [];
+      }
+    },
+  });
+}

@@ -1,12 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import {
-  ArrowLeft,
-  CheckCircle2,
-  AlertCircle,
-  ExternalLink,
-} from "lucide-react";
+import { ArrowLeft, CheckCircle2, AlertCircle, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,17 +13,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Disclaimer } from "@/components/Disclaimer";
 import { SchemeVideoPlayer } from "@/components/SchemeVideoPlayer";
 import { SchemeRequiredDocuments } from "@/components/SchemeRequiredDocuments";
 import { GuestEligibilityCta } from "@/components/GuestEligibilityCta";
 import { PointWiseList } from "@/components/PointWiseList";
-import {
-  useApplications,
-  useIsAdmin,
-  useMatches,
-  useUser,
-} from "@/hooks/use-app-data";
+import { useApplications, useIsAdmin, useMatches, useUser } from "@/hooks/use-app-data";
 import { getSchemeVideo } from "@/lib/video-helpers";
 import { splitRequiredDocuments } from "@/lib/document-helpers";
 import { APP_STATUSES } from "@/lib/constants";
@@ -65,9 +54,7 @@ function Detail() {
   const s = m.scheme;
   const vid = getSchemeVideo(s);
   const eligibilityExtra: SchemeEligibilityExtra | null =
-    typeof s.eligibility === "object" &&
-      s.eligibility !== null &&
-      !Array.isArray(s.eligibility)
+    typeof s.eligibility === "object" && s.eligibility !== null && !Array.isArray(s.eligibility)
       ? (s.eligibility as SchemeEligibilityExtra)
       : null;
 
@@ -89,10 +76,7 @@ function Detail() {
 
   return (
     <div className="space-y-6">
-      <Link
-        to="/schemes"
-        className="inline-flex items-center gap-1 text-sm text-primary"
-      >
+      <Link to="/schemes" className="inline-flex items-center gap-1 text-sm text-primary">
         <ArrowLeft className="h-4 w-4" />
         All schemes
       </Link>
@@ -103,9 +87,7 @@ function Detail() {
           <Badge variant="secondary">{s.category}</Badge>
           <Badge variant="outline">{s.level} Government</Badge>
         </div>
-        <h1 className="mt-3 text-2xl font-bold text-primary md:text-3xl">
-          {s.name}
-        </h1>
+        <h1 className="mt-3 text-2xl font-bold text-primary md:text-3xl">{s.name}</h1>
         <p className="text-sm text-muted-foreground">{s.ministry}</p>
         {s.description && (
           <div className="mt-4">
@@ -139,26 +121,25 @@ function Detail() {
             />
           </div>
         )}
-        {(eligibilityExtra?.application_process ||
-          eligibilityExtra?.application_deadline) && (
-            <div className="mt-4 text-sm">
-              {eligibilityExtra.application_process && (
-                <div className="mb-2">
-                  <b>Application Process:</b>
-                  <PointWiseList
-                    text={eligibilityExtra.application_process}
-                    inlineIfSingle
-                    className="mt-1"
-                  />
-                </div>
-              )}
-              {eligibilityExtra.application_deadline && (
-                <p>
-                  <b>Deadline:</b> {eligibilityExtra.application_deadline}
-                </p>
-              )}
-            </div>
-          )}
+        {(eligibilityExtra?.application_process || eligibilityExtra?.application_deadline) && (
+          <div className="mt-4 text-sm">
+            {eligibilityExtra.application_process && (
+              <div className="mb-2">
+                <b>Application Process:</b>
+                <PointWiseList
+                  text={eligibilityExtra.application_process}
+                  inlineIfSingle
+                  className="mt-1"
+                />
+              </div>
+            )}
+            {eligibilityExtra.application_deadline && (
+              <p>
+                <b>Deadline:</b> {eligibilityExtra.application_deadline}
+              </p>
+            )}
+          </div>
+        )}
         {!isAdmin && (
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {s.apply_url && s.apply_url.trim() ? (
@@ -209,9 +190,7 @@ function Detail() {
             <p
               className={`mt-2 text-sm font-medium ${m.eligible ? "text-success" : "text-destructive"}`}
             >
-              {m.eligible
-                ? "You may be eligible"
-                : "You may not meet some criteria"}
+              {m.eligible ? "You may be eligible" : "You may not meet some criteria"}
             </p>
             {s.eligibility_text && (
               <div className="mt-4">
@@ -245,7 +224,6 @@ function Detail() {
           <SchemeRequiredDocuments documents={s.required_documents} missingDocs={m.missingDocs} />
         </div>
       )}
-      <Disclaimer />
     </div>
   );
 }

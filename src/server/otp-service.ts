@@ -48,6 +48,16 @@ export function normalizeEmail(email: string): string {
   return (email || "").trim().toLowerCase();
 }
 
+// In-flight mutex map to prevent concurrent duplicate email sends for the exact same email
+const inFlightOtpSends = new Map<string, Promise<{
+  success: boolean;
+  message: string;
+  cooldownSeconds?: number;
+  expiresInSeconds?: number;
+  error?: string;
+  resendId?: string;
+}>>();
+
 /**
  * Send an OTP via Resend API to the given email address
  */
@@ -70,63 +80,72 @@ export async function sendEmailOtp(
     return { success: false, message: "Invalid email address", error: "Invalid email address" };
   }
 
-  const now = Date.now();
-  const existing = otpStore.get(email);
-
-  if (existing) {
-    // Check cooldown
-    const timeSinceLastSent = now - existing.lastSentAt;
-    if (timeSinceLastSent < OTP_CONFIG.COOLDOWN_MS) {
-      const waitSec = Math.ceil((OTP_CONFIG.COOLDOWN_MS - timeSinceLastSent) / 1000);
-      return {
-        success: false,
-        message: `Please wait ${waitSec} second(s) before requesting another OTP.`,
-        error: `Please wait ${waitSec} second(s) before requesting another OTP.`,
-        cooldownSeconds: waitSec,
-      };
-    }
-
-    // Check resend window limits
-    if (now - existing.createdAt < OTP_CONFIG.RESEND_WINDOW_MS) {
-      if (existing.resendCount >= OTP_CONFIG.MAX_RESENDS) {
-        return {
-          success: false,
-          message: "Too many OTP requests. Please wait a few minutes before trying again.",
-          error: "Too many OTP requests. Please wait a few minutes before trying again.",
-        };
-      }
-    }
+  // Deduplicate concurrent in-flight requests for the exact same email address
+  const activePromise = inFlightOtpSends.get(email);
+  if (activePromise) {
+    console.log(`[OTP Service] Deduplicating concurrent OTP dispatch for ${email}`);
+    return activePromise;
   }
 
-  // Generate new OTP
-  const otp = options?.overrideOtp || generateSecureOtp();
-  const otpHash = hashOtp(otp);
-  const expiresAt = now + OTP_CONFIG.EXPIRY_MS;
+  const sendPromise = (async () => {
+    try {
+      const now = Date.now();
+      const existing = otpStore.get(email);
 
-  const resendCount = existing && now - existing.createdAt < OTP_CONFIG.RESEND_WINDOW_MS
-    ? existing.resendCount + 1
-    : 0;
+      if (existing) {
+        // Check cooldown: do not dispatch duplicate OTP emails if requested within cooldown
+        const timeSinceLastSent = now - existing.lastSentAt;
+        if (timeSinceLastSent < OTP_CONFIG.COOLDOWN_MS) {
+          const waitSec = Math.ceil((OTP_CONFIG.COOLDOWN_MS - timeSinceLastSent) / 1000);
+          return {
+            success: false,
+            message: `Please wait ${waitSec} second(s) before requesting another OTP.`,
+            error: `Please wait ${waitSec} second(s) before requesting another OTP.`,
+            cooldownSeconds: waitSec,
+          };
+        }
 
-  // Invalidate any previous OTP by setting new record
-  const newRecord: OtpRecord = {
-    email,
-    userName,
-    otpHash,
-    expiresAt,
-    attempts: 0,
-    resendCount,
-    lastSentAt: now,
-    createdAt: existing && now - existing.createdAt < OTP_CONFIG.RESEND_WINDOW_MS ? existing.createdAt : now,
-  };
-  otpStore.set(email, newRecord);
-  console.log(`[OTP Service] Generated 6-digit OTP for ${email}: ${otp}`);
+        // Check resend window limits
+        if (now - existing.createdAt < OTP_CONFIG.RESEND_WINDOW_MS) {
+          if (existing.resendCount >= OTP_CONFIG.MAX_RESENDS) {
+            return {
+              success: false,
+              message: "Too many OTP requests. Please wait a few minutes before trying again.",
+              error: "Too many OTP requests. Please wait a few minutes before trying again.",
+            };
+          }
+        }
+      }
 
-  // Email parameters
-  const apiKey = options?.apiKey || process.env["RESEND_API_KEY"];
-  const fromEmail = options?.fromEmail || process.env["RESEND_FROM_EMAIL"] || "Scheme Finder <onboarding@resend.dev>";
-  const subject = "Verify Your Email — Scheme Finder";
+      // Generate new OTP
+      const otp = options?.overrideOtp || generateSecureOtp();
+      const otpHash = hashOtp(otp);
+      const expiresAt = now + OTP_CONFIG.EXPIRY_MS;
 
-  const textContent = `Hello ${userName},
+      const resendCount = existing && now - existing.createdAt < OTP_CONFIG.RESEND_WINDOW_MS
+        ? existing.resendCount + 1
+        : 0;
+
+      // Invalidate any previous OTP by setting new record
+      const newRecord: OtpRecord = {
+        email,
+        userName,
+        otpHash,
+        expiresAt,
+        attempts: 0,
+        resendCount,
+        lastSentAt: now,
+        createdAt: existing && now - existing.createdAt < OTP_CONFIG.RESEND_WINDOW_MS ? existing.createdAt : now,
+      };
+      otpStore.set(email, newRecord);
+      console.log(`[OTP Service] Generated 6-digit OTP for ${email}: ${otp}`);
+
+      // Email parameters
+      const apiKey = options?.apiKey || process.env["RESEND_API_KEY"];
+      const fromEmail = options?.fromEmail || process.env["RESEND_FROM_EMAIL"] || "Scheme Finder <onboarding@resend.dev>";
+      const subject = "Verify Your Email — Scheme Finder";
+
+      const textContent = `Hello ${userName},
 
 Thank you for registering with Scheme Finder. Your email verification code is:
 
@@ -139,7 +158,7 @@ If you did not request this code, you can ignore this email.
 Regards,
 Scheme Finder Team`;
 
-  const htmlContent = `<!DOCTYPE html>
+      const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -186,100 +205,107 @@ Scheme Finder Team`;
 </body>
 </html>`;
 
-  // Check if Resend API key is present
-  if (!apiKey) {
-    // If in test environment without key, allow mock simulation
-    if (process.env["NODE_ENV"] === "test" || process.env["VITEST"]) {
-      return {
-        success: true,
-        message: "Verification code sent to your email (test mode)",
-        cooldownSeconds: 60,
-        expiresInSeconds: 300,
-        resendId: "mock-resend-id-" + otp,
-      };
-    }
-    return {
-      success: false,
-      message: "Resend API key is not configured. Please set RESEND_API_KEY in your server environment.",
-      error: "RESEND_API_KEY missing",
-    };
-  }
-
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [email],
-        subject,
-        text: textContent,
-        html: htmlContent,
-      }),
-    });
-
-    const data = await res.json().catch(() => null);
-
-    if (!res.ok) {
-      // If failed due to unverified custom domain (e.g. 403), fallback to onboarding@resend.dev
-      if (fromEmail !== "Scheme Finder <onboarding@resend.dev>") {
-        console.warn(`[OTP Service] Custom sender domain failed (${data?.message}). Retrying with onboarding@resend.dev`);
-        try {
-          const fallbackRes = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from: "Scheme Finder <onboarding@resend.dev>",
-              to: [email],
-              subject,
-              text: textContent,
-              html: htmlContent,
-            }),
-          });
-          const fallbackData = await fallbackRes.json().catch(() => null);
-          if (fallbackRes.ok) {
-            return {
-              success: true,
-              message: "Verification code sent to your email",
-              cooldownSeconds: 60,
-              expiresInSeconds: 300,
-              resendId: fallbackData?.id,
-            };
-          }
-        } catch (fallbackErr) {
-          console.warn("[OTP Service] Fallback send error:", fallbackErr);
+      // Check if Resend API key is present
+      if (!apiKey) {
+        // If in test environment without key, allow mock simulation
+        if (process.env["NODE_ENV"] === "test" || process.env["VITEST"]) {
+          return {
+            success: true,
+            message: "Verification code sent to your email (test mode)",
+            cooldownSeconds: 60,
+            expiresInSeconds: 300,
+            resendId: "mock-resend-id-" + otp,
+          };
         }
+        return {
+          success: false,
+          message: "Resend API key is not configured. Please set RESEND_API_KEY in your server environment.",
+          error: "RESEND_API_KEY missing",
+        };
       }
 
-      const errDetail = data?.message || data?.error?.message || res.statusText || "Failed to send email";
-      return {
-        success: false,
-        message: `Failed to deliver email: ${errDetail}`,
-        error: errDetail,
-      };
-    }
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: fromEmail,
+            to: [email],
+            subject,
+            text: textContent,
+            html: htmlContent,
+          }),
+        });
 
-    return {
-      success: true,
-      message: "Verification code sent to your email",
-      cooldownSeconds: 60,
-      expiresInSeconds: 300,
-      resendId: data?.id,
-    };
-  } catch (err: any) {
-    const errorMsg = err?.message || "Network error while connecting to Resend API";
-    return {
-      success: false,
-      message: `Email delivery failure: ${errorMsg}`,
-      error: errorMsg,
-    };
-  }
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          // If failed due to unverified custom domain (e.g. 403), fallback to onboarding@resend.dev
+          if (fromEmail !== "Scheme Finder <onboarding@resend.dev>") {
+            console.warn(`[OTP Service] Custom sender domain failed (${data?.message}). Retrying with onboarding@resend.dev`);
+            try {
+              const fallbackRes = await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${apiKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  from: "Scheme Finder <onboarding@resend.dev>",
+                  to: [email],
+                  subject,
+                  text: textContent,
+                  html: htmlContent,
+                }),
+              });
+              const fallbackData = await fallbackRes.json().catch(() => null);
+              if (fallbackRes.ok) {
+                return {
+                  success: true,
+                  message: "Verification code sent to your email",
+                  cooldownSeconds: 60,
+                  expiresInSeconds: 300,
+                  resendId: fallbackData?.id,
+                };
+              }
+            } catch (fallbackErr) {
+              console.warn("[OTP Service] Fallback send error:", fallbackErr);
+            }
+          }
+
+          const errDetail = data?.message || data?.error?.message || res.statusText || "Failed to send email";
+          return {
+            success: false,
+            message: `Failed to deliver email: ${errDetail}`,
+            error: errDetail,
+          };
+        }
+
+        return {
+          success: true,
+          message: "Verification code sent to your email",
+          cooldownSeconds: 60,
+          expiresInSeconds: 300,
+          resendId: data?.id,
+        };
+      } catch (err: any) {
+        const errorMsg = err?.message || "Network error while connecting to Resend API";
+        return {
+          success: false,
+          message: `Email delivery failure: ${errorMsg}`,
+          error: errorMsg,
+        };
+      }
+    } finally {
+      inFlightOtpSends.delete(email);
+    }
+  })();
+
+  inFlightOtpSends.set(email, sendPromise);
+  return sendPromise;
 }
 
 /**
@@ -489,7 +515,7 @@ export async function verifyEmailOtp(
 }
 
 /**
- * Send an email notification to the Administrator when an agent completes OTP verification
+ * Send an email notification to the assigned Sub-Admin and Main Administrator when an agent completes OTP verification
  */
 export async function sendAdminApprovalNotification(
   agentDetails: {
@@ -500,6 +526,10 @@ export async function sendAdminApprovalNotification(
     address?: string;
     state?: string;
     district?: string;
+    subAdminId?: string;
+    subAdminName?: string;
+    subAdminEmail?: string;
+    organizationName?: string;
   },
   options?: { adminEmail?: string; apiKey?: string; fromEmail?: string }
 ): Promise<{ success: boolean; message: string; error?: string }> {
@@ -511,8 +541,12 @@ export async function sendAdminApprovalNotification(
     return { success: true, message: "Admin notification recorded (test/mock mode)" };
   }
 
-  const subject = `New Agent Registration Pending Approval - ${agentDetails.fullName}`;
-  const textContent = `Hello Administrator,
+  // Route approval email notification to assigned Sub-Admin if provided
+  const targetEmail = agentDetails.subAdminEmail?.trim() || adminEmail;
+  const recipientName = agentDetails.subAdminName?.trim() || (agentDetails.organizationName ? `${agentDetails.organizationName} Administrator` : "Administrator");
+
+  const subject = `Action Required: New Agent Approval Request - ${agentDetails.fullName}${agentDetails.organizationName ? ` (${agentDetails.organizationName})` : ""}`;
+  const textContent = `Hello ${recipientName},
 
 A new agent has successfully verified their email address and submitted a registration request:
 
@@ -522,12 +556,13 @@ Mobile: ${agentDetails.mobile || "N/A"}
 Agency/Organization: ${agentDetails.agencyName || "Independent"}
 Location: ${agentDetails.district || ""}, ${agentDetails.state || ""}
 Address: ${agentDetails.address || "N/A"}
+Assigned Organization: ${agentDetails.organizationName || "General / Central"}
 
-Please review and approve or reject this agent in the Admin Dashboard:
-Pending Agent Requests section.
+Please review and approve or reject this agent in your Dashboard:
+Agent Approval Requests section.
 
 Regards,
-Scheme Finder Platform System`;
+Scheme Compass System`;
 
   const htmlContent = `<!DOCTYPE html>
 <html>
@@ -538,7 +573,7 @@ Scheme Finder Platform System`;
         Action Required: Pending Agent Approval
       </span>
       <h2 style="color: #0f172a; margin: 12px 0 6px 0; font-size: 20px;">New Verified Agent Registration</h2>
-      <p style="color: #64748b; font-size: 14px; margin: 0;">An agent has completed email OTP verification and is awaiting your approval.</p>
+      <p style="color: #64748b; font-size: 14px; margin: 0;">Hello <strong>${recipientName}</strong>, an agent has completed OTP verification and is awaiting your review.</p>
     </div>
 
     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
@@ -563,11 +598,15 @@ Scheme Finder Platform System`;
           <td style="padding: 6px 0; color: #64748b;">Location:</td>
           <td style="padding: 6px 0; color: #0f172a;">${agentDetails.district || ""}, ${agentDetails.state || ""}</td>
         </tr>
+        ${agentDetails.organizationName ? `<tr>
+          <td style="padding: 6px 0; color: #64748b;">Routing Sub-Admin:</td>
+          <td style="padding: 6px 0; font-weight: 600; color: #0f172a;">${agentDetails.organizationName}</td>
+        </tr>` : ""}
       </table>
     </div>
 
     <p style="font-size: 14px; line-height: 1.5; color: #475569;">
-      This agent will not be able to log in or access the Agent Dashboard until an administrator approves their application.
+      This agent will not be able to log in or access the Agent Dashboard until an authorized administrator approves their application.
     </p>
 
     <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
@@ -579,6 +618,11 @@ Scheme Finder Platform System`;
 </html>`;
 
   try {
+    const recipients = [targetEmail];
+    if (agentDetails.subAdminEmail && adminEmail && adminEmail !== targetEmail) {
+      recipients.push(adminEmail);
+    }
+
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -587,7 +631,7 @@ Scheme Finder Platform System`;
       },
       body: JSON.stringify({
         from: fromEmail,
-        to: [adminEmail],
+        to: recipients,
         subject,
         text: textContent,
         html: htmlContent,
@@ -604,7 +648,7 @@ Scheme Finder Platform System`;
           },
           body: JSON.stringify({
             from: "Scheme Finder <onboarding@resend.dev>",
-            to: [adminEmail],
+            to: recipients,
             subject,
             text: textContent,
             html: htmlContent,

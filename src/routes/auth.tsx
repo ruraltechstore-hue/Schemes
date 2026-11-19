@@ -58,19 +58,65 @@ function Login() {
 
     setBusy(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      let { data, error } = await supabase.auth.signInWithPassword({
         email: normalizedEmail,
         password,
       });
+
+      // If Supabase returned "Email not confirmed", check if this account belongs to an active Sub-Admin
+      // Sub-Admins are provisioned by Main Admin and log in directly without OTP/email confirmation
+      if (error && error.message.toLowerCase().includes("email not confirmed")) {
+        try {
+          if (typeof supabase?.rpc === "function") {
+            const { data: wasSubAdmin } = await supabase.rpc("confirm_sub_admin_email", {
+              _email: normalizedEmail,
+            });
+
+            if (wasSubAdmin) {
+              // Sub-Admin confirmed; retry sign-in immediately
+              const retryRes = await supabase.auth.signInWithPassword({
+                email: normalizedEmail,
+                password,
+              });
+              data = retryRes.data;
+              error = retryRes.error;
+            }
+          }
+        } catch (rpcErr) {
+          console.warn("Sub-admin auto-confirm check error:", rpcErr);
+        }
+      }
+
       setBusy(false);
 
       if (error) {
         if (error.message.toLowerCase().includes("invalid login credentials")) {
           toast.error("Invalid email or password. Please verify your credentials and try again.");
         } else if (error.message.toLowerCase().includes("email not confirmed")) {
-          toast.error(
-            "Your email is not verified yet. Please complete registration OTP verification.",
-          );
+          let isSubAdminAccount = false;
+          try {
+            const { data: subAdminCheck } = await supabase
+              .from("sub_admin_profiles")
+              .select("id, is_active")
+              .ilike("email", normalizedEmail)
+              .maybeSingle();
+            if (subAdminCheck) {
+              isSubAdminAccount = true;
+            }
+          } catch {
+            // ignore
+          }
+
+          if (isSubAdminAccount) {
+            toast.error(
+              "Sub-Admin email is not yet confirmed. Please ensure 'Confirm email' is turned OFF in Supabase Auth (Authentication -> Providers -> Email) or run the migration script in Supabase SQL editor.",
+              { duration: 8000 }
+            );
+          } else {
+            toast.error(
+              "Your email is not verified yet. Please complete registration OTP verification.",
+            );
+          }
         } else if (
           error.message.toLowerCase().includes("fetch") ||
           error.message.toLowerCase().includes("network")
@@ -85,16 +131,51 @@ function Login() {
       }
 
       if (data?.user) {
-        const { data: roleData } = await supabase
+        let { data: roleRecords } = await supabase
           .from("user_roles")
           .select("role")
-          .eq("user_id", data.user.id)
-          .eq("role", "admin")
-          .maybeSingle();
+          .eq("user_id", data.user.id);
 
-        if (roleData?.role === "admin") {
+        let roles = (roleRecords || []).map((r: any) => r.role);
+
+        // Fallback: If role is not in user_roles, check sub_admin_profiles directly
+        if (!roles.includes("admin") && !roles.includes("sub_admin")) {
+          const { data: subAdminCheck } = await supabase
+            .from("sub_admin_profiles")
+            .select("id, is_active")
+            .eq("id", data.user.id)
+            .maybeSingle();
+
+          if (subAdminCheck) {
+            roles.push("sub_admin");
+          }
+        }
+
+        if (roles.includes("admin")) {
           toast.success("Welcome back, Administrator!");
           nav("/admin");
+          return;
+        }
+
+        if (roles.includes("sub_admin")) {
+          const { data: subAdminProfile } = await supabase
+            .from("sub_admin_profiles")
+            .select("*")
+            .eq("id", data.user.id)
+            .maybeSingle();
+
+          if (subAdminProfile && subAdminProfile.is_active === false) {
+            await supabase.auth.signOut();
+            toast.error("Your Sub-Admin account has been deactivated. Please contact the Main Administrator.");
+            return;
+          }
+
+          toast.success(
+            `Welcome back, ${subAdminProfile?.full_name || "Sub-Admin"}${
+              subAdminProfile?.organization_name ? ` (${subAdminProfile.organization_name})` : ""
+            }!`
+          );
+          nav("/sub-admin");
           return;
         }
 

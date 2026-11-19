@@ -22,6 +22,8 @@ import {
   XCircle,
   AlertTriangle,
   RotateCw,
+  Bell,
+  Building2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Logo } from "@/components/Logo";
@@ -38,7 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useUser, useProfile, useIsAdmin } from "@/hooks/use-app-data";
+import { useUser, useProfile, useIsAdmin, useIsSubAdmin, useSubAdminProfile } from "@/hooks/use-app-data";
 import { useAgentProfile } from "@/hooks/use-agent-data";
 import { getInitials } from "@/lib/profile-helpers";
 import { useInactivityTimeout } from "@/hooks/use-inactivity-timeout";
@@ -58,14 +60,27 @@ const agentNav = [
 
 const adminNav = [
   { to: "/admin", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/admin?tab=subadmins", label: "Sub-Admin Management", icon: ShieldCheck },
+  { to: "/admin?tab=agents", label: "Agent Management", icon: Users },
   { to: "/schemes", label: "All Schemes", icon: Library },
   { to: "/admin/profile", label: "Profile", icon: User },
+];
+
+const subAdminNav = [
+  { to: "/sub-admin", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/sub-admin?tab=approvals", label: "Agent Approvals", icon: ShieldCheck },
+  { to: "/sub-admin?tab=agents", label: "My Agents", icon: Users },
+  { to: "/sub-admin?tab=beneficiaries", label: "Beneficiaries", icon: FileText },
+  { to: "/sub-admin?tab=reports", label: "Performance", icon: FileBarChart },
+  { to: "/sub-admin?tab=notifications", label: "Notifications", icon: Bell },
+  { to: "/sub-admin?tab=profile", label: "Profile", icon: User },
 ];
 
 function SideNav({ onNavigate }: { onNavigate?: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data: isAdmin } = useIsAdmin();
+  const { data: isSubAdmin } = useIsSubAdmin();
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
 
   const confirmLogout = async () => {
@@ -84,13 +99,15 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
   const cls =
     "flex items-center gap-3 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors";
 
+  const navItems = isAdmin ? adminNav : isSubAdmin ? subAdminNav : agentNav;
+
   return (
     <div className="flex h-full flex-col bg-sidebar p-4">
       <div className="mb-6 px-2">
         <Logo light />
       </div>
       <nav className="flex-1 space-y-1">
-        {(isAdmin ? adminNav : agentNav).map((n) => (
+        {navItems.map((n) => (
           <Link key={n.to} to={n.to} className={cls} onClick={onNavigate}>
             <n.icon className="h-4 w-4" />
             {n.label}
@@ -140,6 +157,8 @@ function Layout() {
   const { data: user, isLoading: userLoading } = useUser();
   const { data: profile } = useProfile();
   const { data: isAdmin, isLoading: adminLoading } = useIsAdmin();
+  const { data: isSubAdmin, isLoading: subAdminLoading } = useIsSubAdmin();
+  const { data: subAdminProfile } = useSubAdminProfile(user?.id);
   const {
     data: agentProfile,
     isLoading: agentLoading,
@@ -166,7 +185,7 @@ function Layout() {
     navigate("/auth", { replace: true });
   };
 
-  const isApprovedAgent = !!user && !isAdmin && agentProfile?.status === "approved";
+  const isApprovedAgent = !!user && !isAdmin && !isSubAdmin && agentProfile?.status === "approved";
 
   const handleInactivityLogout = useCallback(async () => {
     try {
@@ -198,7 +217,8 @@ function Layout() {
   if (
     userLoading ||
     adminLoading ||
-    (!isAdmin && agentLoading && typeof supabase?.from === "function")
+    subAdminLoading ||
+    (!isAdmin && !isSubAdmin && agentLoading && typeof supabase?.from === "function")
   ) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -214,10 +234,37 @@ function Layout() {
     return null;
   }
 
+  // Deactivated Sub-Admin access block
+  if (isSubAdmin && subAdminProfile && subAdminProfile.is_active === false) {
+    return (
+      <div className="min-h-screen bg-muted/20 flex flex-col items-center justify-center p-4">
+        <div className="tricolor-bar h-1 w-full fixed top-0 left-0" />
+        <div className="max-w-md w-full rounded-2xl border bg-card p-6 md:p-8 shadow-card text-center space-y-5">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-destructive">
+            <AlertTriangle className="h-9 w-9" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">Sub-Admin Account Deactivated</h2>
+            <p className="mt-2 text-sm text-destructive bg-destructive/10 rounded-lg p-3 border border-destructive/20 font-medium">
+              Your Sub-Admin account for {subAdminProfile.organization_name} has been deactivated by the Main Administrator.
+            </p>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            You cannot manage agents or view platform data while your account is deactivated. Please contact the Main Administrator for reactivation.
+          </p>
+          <Button variant="default" className="w-full" onClick={logout}>
+            <LogOut className="h-4 w-4 mr-2" />
+            Logout
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // Role-based Access Control Check:
-  // Administrators bypass agent approval and proceed directly.
+  // Administrators and Sub-Admins bypass agent approval and proceed directly.
   // For non-admin agents: enforce pending, rejected, and suspended states.
-  if (!isAdmin && agentProfile) {
+  if (!isAdmin && !isSubAdmin && agentProfile) {
     const status = agentProfile.status;
 
     if (status === "unverified" || agentProfile.email_verified === false) {
@@ -377,15 +424,17 @@ function Layout() {
   }
 
   const displayName =
+    (isSubAdmin ? subAdminProfile?.full_name : null) ||
     agentProfile?.full_name ||
     profile?.full_name ||
     user?.user_metadata?.["full_name"] ||
     profile?.email ||
     user?.email ||
-    "Agent";
+    (isSubAdmin ? "Sub-Admin" : "Agent");
 
-  const agencyName = agentProfile?.agency_name;
+  const agencyName = isSubAdmin ? subAdminProfile?.organization_name : agentProfile?.agency_name;
   const avatarUrl =
+    (isSubAdmin ? subAdminProfile?.avatar_url : null) ||
     user?.user_metadata?.["avatar_url"] ||
     (profile as { avatar_url?: string } | null)?.avatar_url ||
     null;
@@ -413,13 +462,17 @@ function Layout() {
             <span className="font-semibold text-foreground">Scheme Compass</span>
             <span>·</span>
             <span>
-              {isAdmin ? "Admin Portal" : `Agent Portal ${agencyName ? `(${agencyName})` : ""}`}
+              {isAdmin
+                ? "Admin Portal"
+                : isSubAdmin
+                  ? `Sub-Admin Portal ${agencyName ? `(${agencyName})` : ""}`
+                  : `Agent Portal ${agencyName ? `(${agencyName})` : ""}`}
             </span>
           </div>
           <Link
-            to={isAdmin ? "/admin/profile" : "/profile"}
+            to={isAdmin ? "/admin/profile" : isSubAdmin ? "/sub-admin?tab=profile" : "/profile"}
             className="flex items-center gap-2.5 rounded-full px-2 py-1 hover:bg-muted/60 transition-colors group"
-            title={isAdmin ? "View Admin Profile" : "View Agent Profile"}
+            title={isAdmin ? "View Admin Profile" : isSubAdmin ? "View Sub-Admin Profile" : "View Agent Profile"}
             data-testid="header-profile-link"
           >
             <Avatar className="h-8 w-8 border border-border group-hover:ring-2 group-hover:ring-primary/20 transition-all">
@@ -435,7 +488,11 @@ function Layout() {
                 {displayName}
               </span>
               <span className="text-[10px] text-muted-foreground leading-tight">
-                {isAdmin ? "Administrator" : agencyName || "Certified Agent"}
+                {isAdmin
+                  ? "Administrator"
+                  : isSubAdmin
+                    ? `${subAdminProfile?.designation || "Sub-Admin"} · ${agencyName || "Organization"}`
+                    : agencyName || "Certified Agent"}
               </span>
             </div>
           </Link>

@@ -32,15 +32,45 @@ import {
 import { AuthLayout } from "@/components/AuthLayout";
 import { STATES } from "@/lib/constants";
 import { sendOtpRequest, verifyOtpRequest, notifyAdminApprovalRequest } from "@/lib/otp-client";
+import { useActiveSubAdmins } from "@/hooks/use-agent-data";
 
 export default Register;
 
 function Register() {
   const navigate = useNavigate();
+  const [activeSubAdmins, setActiveSubAdmins] = useState<any[]>([]);
+  const [subAdminsLoading, setSubAdminsLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadActiveSubAdmins() {
+      try {
+        if (typeof supabase?.from !== "function") return;
+        const fromRes = supabase.from("sub_admin_profiles");
+        if (typeof fromRes?.select !== "function") return;
+        const query = fromRes.select("id, full_name, email, organization_name, designation, avatar_url, is_active");
+        const filtered = typeof query?.eq === "function" ? query.eq("is_active", true) : query;
+        const ordered = typeof filtered?.order === "function" ? filtered.order("organization_name", { ascending: true }) : filtered;
+        const { data, error } = await ordered;
+        if (!error && Array.isArray(data) && isMounted) {
+          setActiveSubAdmins(data);
+        }
+        if (isMounted) setSubAdminsLoading(false);
+      } catch {
+        if (isMounted) setSubAdminsLoading(false);
+      }
+    }
+    loadActiveSubAdmins();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const [f, setF] = useState({
     name: "",
     email: "",
     mobile: "",
+    subAdminId: "",
     agencyName: "",
     address: "",
     state: "",
@@ -63,6 +93,9 @@ function Register() {
 
   const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
   const expiryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isSubmittingRef = useRef(false);
+  const isResendingRef = useRef(false);
+  const isVerifyingRef = useRef(false);
 
   // Helper to update form values
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,24 +143,55 @@ function Register() {
     e.preventDefault();
     setErrorMessage(null);
 
+    // Prevent duplicate submissions if already submitting
+    if (isSubmittingRef.current || busy) {
+      return;
+    }
+    isSubmittingRef.current = true;
+
     const email = f.email.trim().toLowerCase();
     const name = f.name.trim();
 
     if (!/^[6-9]\d{9}$/.test(f.mobile)) {
       toast.error("Enter a valid 10-digit mobile number starting with 6-9");
+      isSubmittingRef.current = false;
       return;
     }
+    if (activeSubAdmins.length === 0) {
+      toast.error("No active Sub-Admin is currently available. Please contact the administrator before registering.");
+      setErrorMessage("No active Sub-Admin is currently available. Please contact the administrator before registering.");
+      isSubmittingRef.current = false;
+      return;
+    }
+    if (!f.subAdminId) {
+      toast.error("Please select your Sub-Admin / Organization");
+      setErrorMessage("Please select your Sub-Admin / Organization to route your registration.");
+      isSubmittingRef.current = false;
+      return;
+    }
+
+    const selectedSubAdmin = activeSubAdmins.find((s) => s.id === f.subAdminId);
+    if (!selectedSubAdmin) {
+      toast.error("The selected Sub-Admin is not active or valid. Please choose an active Sub-Admin.");
+      setErrorMessage("The selected Sub-Admin is not active. Please choose an active Sub-Admin.");
+      isSubmittingRef.current = false;
+      return;
+    }
+
     if (!f.state) {
       toast.error("Please select your state");
+      isSubmittingRef.current = false;
       return;
     }
     if (f.password.length < 6) {
       toast.error("Password must be at least 6 characters long");
+      isSubmittingRef.current = false;
       return;
     }
     if (f.confirmPassword && f.confirmPassword !== f.password) {
       toast.error("Passwords do not match");
       setErrorMessage("Passwords do not match");
+      isSubmittingRef.current = false;
       return;
     }
 
@@ -149,6 +213,7 @@ function Register() {
             district: f.district.trim(),
             role: "agent",
             is_agent: true,
+            sub_admin_id: f.subAdminId,
           },
         },
       });
@@ -160,6 +225,7 @@ function Register() {
           setErrorMessage(msg);
           toast.error(msg);
           setBusy(false);
+          isSubmittingRef.current = false;
           return;
         } else if (
           signUpError.message.toLowerCase().includes("signups are disabled") ||
@@ -170,6 +236,7 @@ function Register() {
           setErrorMessage(msg);
           toast.error(msg);
           setBusy(false);
+          isSubmittingRef.current = false;
           return;
         } else if (
           signUpError.message.toLowerCase().includes("confirmation email") ||
@@ -180,11 +247,13 @@ function Register() {
           setErrorMessage(msg);
           toast.error(msg);
           setBusy(false);
+          isSubmittingRef.current = false;
           return;
         } else {
           setErrorMessage(signUpError.message);
           toast.error(signUpError.message);
           setBusy(false);
+          isSubmittingRef.current = false;
           return;
         }
       }
@@ -195,6 +264,7 @@ function Register() {
         setErrorMessage(msg);
         toast.error(msg);
         setBusy(false);
+        isSubmittingRef.current = false;
         return;
       }
 
@@ -204,6 +274,7 @@ function Register() {
         setErrorMessage(msg);
         toast.error(msg);
         setBusy(false);
+        isSubmittingRef.current = false;
         return;
       }
 
@@ -220,26 +291,22 @@ function Register() {
           district: f.district.trim(),
           status: "unverified",
           email_verified: false,
+          sub_admin_id: f.subAdminId,
           updated_at: new Date().toISOString(),
         });
       } catch (err) {
         console.warn("Could not pre-register unverified agent profile:", err);
       }
 
-      // 2. Dispatch OTP / transition to OTP screen
-      // Supabase Auth signUp has already dispatched the verification email with the 6-digit OTP code.
-      const res = await sendOtpRequest(email, name).catch(() => ({
-        success: true,
-        message: "Verification code sent to your email",
-        cooldownSeconds: 60,
-        expiresInSeconds: 300,
-      }));
+      // 2. Dispatch exactly ONE OTP email via Resend API
+      const res = await sendOtpRequest(email, name);
 
-      // Only halt if there is an explicit rate limit / validation error (not static hosting 404/405)
+      // Only halt if there is an explicit rate limit / validation error
       if (!res.success && res.message && !res.message.includes("405") && !res.message.includes("404")) {
         setErrorMessage(res.message);
         toast.error(res.message);
         setBusy(false);
+        isSubmittingRef.current = false;
         return;
       }
 
@@ -255,15 +322,17 @@ function Register() {
       toast.error(msg);
     } finally {
       setBusy(false);
+      isSubmittingRef.current = false;
     }
   };
 
   /**
    * Step 2: Resend OTP
+   * Sends exactly ONE new OTP email via Resend API (no redundant Supabase Auth resend call)
    */
   const handleResendOtp = async () => {
-    if (cooldown > 0 || resending) return;
-
+    if (cooldown > 0 || resending || isResendingRef.current) return;
+    isResendingRef.current = true;
     setResending(true);
     setErrorMessage(null);
 
@@ -271,20 +340,16 @@ function Register() {
     const name = f.name.trim();
 
     try {
-      // Trigger Supabase resend
-      await supabase.auth.resend({
-        type: "signup",
-        email,
-        options: { emailRedirectTo: window.location.origin + "/dashboard" },
-      }).catch(() => null);
+      // Retain only one single OTP-sending mechanism (Resend API)
+      const res = await sendOtpRequest(email, name);
 
-      // Ping custom OTP endpoint if available
-      const res = await sendOtpRequest(email, name).catch(() => ({
-        success: true,
-        message: "A new verification code has been sent to your email!",
-        cooldownSeconds: 60,
-        expiresInSeconds: 300,
-      }));
+      if (!res.success) {
+        setErrorMessage(res.message);
+        toast.error(res.message);
+        setResending(false);
+        isResendingRef.current = false;
+        return;
+      }
 
       toast.success("A new verification code has been sent to your email!");
       setCooldown(res.cooldownSeconds ?? 60);
@@ -297,6 +362,7 @@ function Register() {
       toast.error(msg);
     } finally {
       setResending(false);
+      isResendingRef.current = false;
     }
   };
 
@@ -305,13 +371,18 @@ function Register() {
    */
   const handleVerifyOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isVerifyingRef.current || verifying) return;
+    isVerifyingRef.current = true;
+
     if (otp.length !== 6) {
       toast.error("Please enter the complete 6-digit OTP");
+      isVerifyingRef.current = false;
       return;
     }
     if (expiresIn === 0) {
       setErrorMessage("This code has expired. Please click 'Resend OTP' to receive a fresh code.");
       toast.error("OTP has expired. Please request a new code.");
+      isVerifyingRef.current = false;
       return;
     }
 
@@ -321,13 +392,43 @@ function Register() {
     const email = f.email.trim().toLowerCase();
 
     try {
-      // 1. Verify OTP with server endpoint (which also executes Supabase email confirmation)
+      // 1. Verify OTP with server endpoint (single OTP generation and delivery mechanism)
       const verifyRes = await verifyOtpRequest(email, otp);
 
       if (!verifyRes.success) {
         setErrorMessage(verifyRes.message);
         toast.error(verifyRes.message);
         setVerifying(false);
+        isVerifyingRef.current = false;
+        return;
+      }
+
+      // Verify selected Sub-Admin exists and is active before creating the approval request
+      let subAdminCheck: any = null;
+      if (f.subAdminId) {
+        const { data: sap } = await supabase
+          .from("sub_admin_profiles")
+          .select("id, is_active, full_name, organization_name, email")
+          .eq("id", f.subAdminId)
+          .maybeSingle();
+
+        if (!sap || sap.is_active !== true) {
+          const subAdminErrMsg = "The selected Sub-Admin is no longer active. Please return to the registration form and select another active Sub-Admin.";
+          setErrorMessage(subAdminErrMsg);
+          toast.error(subAdminErrMsg);
+          setStep("form");
+          setVerifying(false);
+          isVerifyingRef.current = false;
+          return;
+        }
+        subAdminCheck = sap;
+      } else {
+        const subAdminErrMsg = "No Sub-Admin was selected for routing. Please select an active Sub-Admin.";
+        setErrorMessage(subAdminErrMsg);
+        toast.error(subAdminErrMsg);
+        setStep("form");
+        setVerifying(false);
+        isVerifyingRef.current = false;
         return;
       }
 
@@ -418,19 +519,20 @@ function Register() {
       // 4. Strict authentication verification: do NOT report success if user session could not be established
       if (!authUser) {
         const errorMsg = signInErrorMsg?.toLowerCase().includes("email not confirmed")
-          ? "Account was created in Supabase Auth, but email confirmation is pending. Please verify using the 6-digit code or link sent to your email."
+          ? "Account was created in Supabase Auth, but email confirmation is pending. Please verify using the 6-digit code sent to your email."
           : (signInErrorMsg
-              ? `Could not establish an active user session: ${signInErrorMsg}`
-              : "Invalid verification code. Please check the 6-digit code sent to your email, or click the link in your confirmation email.");
+            ? `Could not establish an active user session: ${signInErrorMsg}`
+            : "Invalid verification code. Please check the 6-digit code sent to your email.");
         setErrorMessage(errorMsg);
         toast.error(errorMsg);
         setVerifying(false);
+        isVerifyingRef.current = false;
         return;
       }
 
       // Step 3 – Successful OTP Verification:
       // Mark agent's email as verified, activate agent profile with approval status 'pending',
-      // save verified registration details, and create the Admin approval request.
+      // assign explicitly to the selected Sub-Admin, and route the approval request.
       try {
         await supabase.from("profiles").upsert({
           id: authUser.id,
@@ -454,6 +556,7 @@ function Register() {
           status: "pending",
           email_verified: true,
           otp_verified_at: new Date().toISOString(),
+          sub_admin_id: f.subAdminId,
           updated_at: new Date().toISOString(),
         });
 
@@ -464,7 +567,29 @@ function Register() {
           // Fallback if RPC is not yet applied in remote schema
         }
 
-        // Send approval notification to Admin
+        // Notify the exact selected Sub-Admin through in-app notifications
+        if (f.subAdminId) {
+          try {
+            await supabase.from("notifications").insert({
+              user_id: f.subAdminId,
+              title: "New Agent Approval Request",
+              message: `${f.name.trim()} (${f.agencyName?.trim() || "Agent Partner"}) has registered under ${subAdminCheck.organization_name} and requested approval.`,
+              type: "agent_approval",
+              data: {
+                agent_id: authUser.id,
+                agent_name: f.name.trim(),
+                email,
+                mobile: f.mobile.trim(),
+                sub_admin_id: f.subAdminId,
+                organization_name: subAdminCheck.organization_name,
+              },
+            });
+          } catch (notifErr) {
+            console.warn("Could not insert sub-admin notification:", notifErr);
+          }
+        }
+
+        // Send approval notification email to assigned Sub-Admin and Main Admin
         await notifyAdminApprovalRequest({
           id: authUser.id,
           fullName: f.name.trim(),
@@ -474,13 +599,17 @@ function Register() {
           address: f.address?.trim() || `${f.district.trim()}, ${f.state}`,
           state: f.state,
           district: f.district.trim(),
+          subAdminId: f.subAdminId,
+          subAdminName: subAdminCheck.full_name,
+          subAdminEmail: subAdminCheck.email,
+          organizationName: subAdminCheck.organization_name,
         }).catch(() => null);
       } catch (err) {
         console.warn("Could not activate verified agent profile:", err);
       }
 
       const verifiedSuccessMsg =
-        "Your email has been verified successfully. Your registration request has been sent to the Admin for approval. You will be able to access your Agent Dashboard after approval.";
+        `Your email has been verified successfully. Your registration request has been routed to ${subAdminCheck.organization_name} for review and approval.`;
       toast.success(verifiedSuccessMsg);
       setStep("success");
     } catch (err: any) {
@@ -489,6 +618,7 @@ function Register() {
       toast.error(msg);
     } finally {
       setVerifying(false);
+      isVerifyingRef.current = false;
     }
   };
 
@@ -746,6 +876,38 @@ function Register() {
           />
         </div>
         <div>
+          <Label htmlFor="reg-sub-admin" className="flex items-center justify-between">
+            <span>Select Your Sub-Admin <span className="text-destructive">*</span></span>
+            {subAdminsLoading && <span className="text-xs text-muted-foreground font-normal">Loading...</span>}
+          </Label>
+          <Select
+            id="reg-sub-admin"
+            value={f.subAdminId}
+            onValueChange={(v) => setF({ ...f, subAdminId: v })}
+            disabled={subAdminsLoading || activeSubAdmins.length === 0}
+          >
+            <SelectTrigger id="reg-sub-admin" aria-label="Select Your Sub-Admin">
+              <SelectValue placeholder={subAdminsLoading ? "Loading Sub-Admins..." : "Select organization / Sub-Admin"} />
+            </SelectTrigger>
+            <SelectContent>
+              {activeSubAdmins.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.organization_name} — {s.full_name} ({s.designation || "Sub-Admin"})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Select the Sub-Admin / Organization responsible for reviewing and approving your agent registration.
+          </p>
+          {!subAdminsLoading && activeSubAdmins.length === 0 && (
+            <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+              <span>No active Sub-Admin is currently available. Please contact the administrator before registering.</span>
+            </div>
+          )}
+        </div>
+        <div>
           <Label htmlFor="reg-address">Address</Label>
           <Input
             id="reg-address"
@@ -757,7 +919,7 @@ function Register() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label htmlFor="reg-state">State</Label>
-            <Select value={f.state} onValueChange={(v) => setF({ ...f, state: v })}>
+            <Select id="reg-state" value={f.state} onValueChange={(v) => setF({ ...f, state: v })}>
               <SelectTrigger id="reg-state">
                 <SelectValue placeholder="Select" />
               </SelectTrigger>
@@ -805,7 +967,7 @@ function Register() {
           </div>
         </div>
 
-        <Button className="w-full" disabled={busy}>
+        <Button className="w-full" disabled={busy || (!subAdminsLoading && activeSubAdmins.length === 0)}>
           {busy ? (
             <>
               <RotateCw className="mr-2 h-4 w-4 animate-spin" />

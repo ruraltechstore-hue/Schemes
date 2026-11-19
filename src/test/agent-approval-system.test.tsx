@@ -30,8 +30,13 @@ vi.mock("../integrations/supabase/client", () => ({
 // Mock Select for jsdom
 vi.mock("@/components/ui/select", () => ({
   Select: ({ children, value, onValueChange, id }: any) => (
-    <select id={id || "reg-state"} aria-label="State" value={value} onChange={(e) => onValueChange?.(e.target.value)}>
-      <option value="">Select State</option>
+    <select
+      id={id || "reg-state"}
+      aria-label={id === "reg-sub-admin" ? "Sub-Admin" : "State"}
+      value={value}
+      onChange={(e) => onValueChange?.(e.target.value)}
+    >
+      <option value="">{id === "reg-sub-admin" ? "Select Sub-Admin" : "Select State"}</option>
       {children}
     </select>
   ),

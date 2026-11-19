@@ -42,6 +42,61 @@ export function useIsAdmin() {
   });
 }
 
+export function useIsSubAdmin() {
+  const { data: user } = useUser();
+  return useQuery({
+    queryKey: ["isSubAdmin", user?.id],
+    enabled: !!user,
+    queryFn: async () => {
+      if (!user) return false;
+
+      // 1. Check sub_admin_profiles directly for verified active status
+      try {
+        const { data: sap } = await supabase
+          .from("sub_admin_profiles")
+          .select("id, is_active")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (sap) {
+          return sap.is_active === true;
+        }
+      } catch {
+        // fallback to user_roles
+      }
+
+      // 2. Fallback check user_roles
+      const { data } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .eq("role", "sub_admin");
+      return (data?.length ?? 0) > 0;
+    },
+  });
+}
+
+export function useSubAdminProfile(userId?: string) {
+  const { data: user } = useUser();
+  const id = userId || user?.id;
+
+  return useQuery({
+    queryKey: ["subAdminProfile", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("sub_admin_profiles")
+        .select("*")
+        .eq("id", id!)
+        .maybeSingle();
+      if (error) {
+        console.warn("Error fetching sub-admin profile:", error);
+        return null;
+      }
+      return data;
+    },
+  });
+}
+
 export function useDocuments() {
   const { data: user } = useUser();
   return useQuery({

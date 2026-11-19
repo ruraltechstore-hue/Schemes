@@ -95,7 +95,20 @@ export async function handleOtpApiRequest(
     }
 
     if (url === "/api/notify-admin-registration") {
-      const { email, fullName, mobile, agencyName, address, state, district } = body || {};
+      const {
+        email,
+        fullName,
+        mobile,
+        agencyName,
+        address,
+        state,
+        district,
+        subAdminId,
+        subAdminName,
+        subAdminEmail,
+        organizationName,
+      } = body || {};
+
       if (!email || !fullName) {
         sendJson(res, 400, { success: false, message: "Email and Full Name are required" });
         return true;
@@ -108,6 +121,10 @@ export async function handleOtpApiRequest(
         address,
         state,
         district,
+        subAdminId,
+        subAdminName,
+        subAdminEmail,
+        organizationName,
       });
       sendJson(res, result.success ? 200 : 500, result);
       return true;

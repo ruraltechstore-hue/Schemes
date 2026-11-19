@@ -29,17 +29,20 @@ vi.mock("@/components/ui/select", () => ({
     children,
     value,
     onValueChange,
+    id,
   }: {
     children: any;
     value: string;
     onValueChange: (v: string) => void;
+    id?: string;
   }) => (
     <select
-      aria-label="State"
+      id={id || "reg-state"}
+      aria-label={id === "reg-sub-admin" ? "Sub-Admin" : "State"}
       value={value}
       onChange={(e) => onValueChange(e.target.value)}
     >
-      <option value="">Select State</option>
+      <option value="">{id === "reg-sub-admin" ? "Select Sub-Admin" : "Select State"}</option>
       {children}
     </select>
   ),

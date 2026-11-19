@@ -9,6 +9,7 @@ import AuthenticatedLayout from "./routes/_authenticated/route";
 import Dashboard from "./routes/_authenticated/dashboard";
 import Admin from "./routes/_authenticated/admin";
 import AdminProfile from "./routes/_authenticated/admin.profile";
+import SubAdminDashboard from "./routes/_authenticated/subadmin";
 import Profile from "./routes/_authenticated/profile";
 import Documents from "./routes/_authenticated/documents";
 import EligibleSchemes from "./routes/_authenticated/eligible";
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin/profile" element={<AdminProfile />} />
+          <Route path="/sub-admin" element={<SubAdminDashboard />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/eligible" element={<EligibleSchemes />} />

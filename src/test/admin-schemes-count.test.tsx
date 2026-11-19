@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
+import { MemoryRouter } from "react-router-dom";
 import Admin from "@/routes/_authenticated/admin";
 import { BulkUpload } from "@/components/BulkUpload";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -188,7 +189,9 @@ function renderAdmin() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Admin />
+      <MemoryRouter>
+        <Admin />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

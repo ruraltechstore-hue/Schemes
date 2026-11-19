@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -18,6 +18,8 @@ import {
   Calendar,
   AlertTriangle,
   RotateCw,
+  ArrowRightLeft,
+  Filter,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -25,6 +27,13 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -44,18 +53,30 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUser } from "@/hooks/use-app-data";
-import { useAllAgentProfiles } from "@/hooks/use-agent-data";
+import { useAllAgentProfiles, useAllSubAdmins, useActiveSubAdmins } from "@/hooks/use-agent-data";
 
 export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: string } = {}) {
 
   const { data: agents = [], isLoading, refetch } = useAllAgentProfiles();
+  const { data: subAdmins = [] } = useAllSubAdmins();
+  const { data: activeSubAdmins = [] } = useActiveSubAdmins();
   const { data: currentUser } = useUser();
   const qc = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<string>(defaultTab);
   const [searchTerm, setSearchTerm] = useState("");
+  const [subAdminFilter, setSubAdminFilter] = useState<string>("all");
   const [selectedAgent, setSelectedAgent] = useState<any | null>(null);
   const [isViewOpen, setIsViewOpen] = useState(false);
+
+  // Reassignment Dialog State
+  const [isReassignOpen, setIsReassignOpen] = useState(false);
+  const [reassignAgent, setReassignAgent] = useState<any | null>(null);
+  const [reassignTargetSubAdminId, setReassignTargetSubAdminId] = useState<string>("unassigned");
+  const [reassignBusy, setReassignBusy] = useState(false);
+
+  // Quick lookup map for Sub-Admins
+  const subAdminMap = useMemo(() => new Map(subAdmins.map((s) => [s.id, s])), [subAdmins]);
 
   // Approval Dialog State
   const [isApproveOpen, setIsApproveOpen] = useState(false);
@@ -84,9 +105,16 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
   const suspendedAgents = agents.filter((a) => a.status === "suspended");
 
   const filterAgents = (list: typeof agents) => {
-    if (!searchTerm.trim()) return list;
+    let res = list;
+    if (subAdminFilter === "unassigned") {
+      res = res.filter((a) => !a.sub_admin_id);
+    } else if (subAdminFilter !== "all") {
+      res = res.filter((a) => a.sub_admin_id === subAdminFilter);
+    }
+
+    if (!searchTerm.trim()) return res;
     const q = searchTerm.toLowerCase();
-    return list.filter(
+    return res.filter(
       (a) =>
         a.full_name?.toLowerCase().includes(q) ||
         a.email?.toLowerCase().includes(q) ||
@@ -120,6 +148,19 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
         .eq("id", agentId);
 
       if (error) throw error;
+
+      try {
+        await supabase.from("agent_approval_history").insert({
+          agent_id: agentId,
+          sub_admin_id: approveTargetAgent.sub_admin_id || null,
+          action: "approved",
+          previous_status: approveTargetAgent.status || "pending",
+          new_status: "approved",
+          actioned_by: currentUser?.id || agentId,
+        });
+      } catch {
+        // ignore
+      }
 
       toast.success("Agent approved successfully! Access granted to Agent Dashboard.");
       setIsApproveOpen(false);
@@ -155,6 +196,21 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
         .eq("id", rejectTargetId);
 
       if (error) throw error;
+
+      try {
+        const target = agents.find((a) => a.id === rejectTargetId) || selectedAgent;
+        await supabase.from("agent_approval_history").insert({
+          agent_id: rejectTargetId,
+          sub_admin_id: target?.sub_admin_id || null,
+          action: "rejected",
+          previous_status: target?.status || "pending",
+          new_status: "rejected",
+          reason: rejectReason.trim(),
+          actioned_by: currentUser?.id || rejectTargetId,
+        });
+      } catch {
+        // ignore
+      }
 
       toast.success("Agent registration rejected.");
       setIsRejectOpen(false);
@@ -194,6 +250,21 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
         .eq("id", suspendTargetId);
 
       if (error) throw error;
+
+      try {
+        const target = agents.find((a) => a.id === suspendTargetId) || selectedAgent;
+        await supabase.from("agent_approval_history").insert({
+          agent_id: suspendTargetId,
+          sub_admin_id: target?.sub_admin_id || null,
+          action: "suspended",
+          previous_status: target?.status || "approved",
+          new_status: "suspended",
+          reason: suspendReason.trim(),
+          actioned_by: currentUser?.id || suspendTargetId,
+        });
+      } catch {
+        // ignore
+      }
 
       toast.success("Agent suspended. Access to dashboard blocked.");
       setIsSuspendOpen(false);
@@ -235,6 +306,19 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
 
       if (error) throw error;
 
+      try {
+        await supabase.from("agent_approval_history").insert({
+          agent_id: agentId,
+          sub_admin_id: reactivateTargetAgent.sub_admin_id || null,
+          action: "reactivated",
+          previous_status: reactivateTargetAgent.status || "suspended",
+          new_status: "approved",
+          actioned_by: currentUser?.id || agentId,
+        });
+      } catch {
+        // ignore
+      }
+
       toast.success("Agent reactivated successfully!");
       setIsReactivateOpen(false);
       qc.invalidateQueries({ queryKey: ["allAgentProfiles"] });
@@ -245,6 +329,72 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
       toast.error("Failed to reactivate agent: " + (err?.message || "Unknown error"));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const openReassignDialog = (agent: any) => {
+    setReassignAgent(agent);
+    setReassignTargetSubAdminId(agent.sub_admin_id || "unassigned");
+    setIsReassignOpen(true);
+  };
+
+  const handleConfirmReassign = async () => {
+    if (!reassignAgent) return;
+    const newSubAdminId = reassignTargetSubAdminId === "unassigned" ? null : reassignTargetSubAdminId;
+    setReassignBusy(true);
+    try {
+      const { error } = await supabase
+        .from("agent_profiles")
+        .update({
+          sub_admin_id: newSubAdminId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", reassignAgent.id);
+
+      if (error) throw error;
+
+      try {
+        await supabase.from("agent_approval_history").insert({
+          agent_id: reassignAgent.id,
+          sub_admin_id: newSubAdminId,
+          action: "reassigned",
+          previous_status: reassignAgent.status,
+          new_status: reassignAgent.status,
+          reason: "Reassigned by Main Administrator",
+          actioned_by: currentUser?.id || reassignAgent.id,
+        });
+      } catch {
+        // ignore
+      }
+
+      if (newSubAdminId) {
+        try {
+          await supabase.from("notifications").insert({
+            user_id: newSubAdminId,
+            title: "Agent Reassigned to Your Organization",
+            message: `Agent ${reassignAgent.full_name} (${reassignAgent.agency_name}) has been reassigned to your organization by Main Admin.`,
+            type: "agent_reassigned",
+            data: { agent_id: reassignAgent.id },
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      toast.success(
+        newSubAdminId
+          ? `Agent reassigned to ${subAdminMap.get(newSubAdminId)?.organization_name || "Sub-Admin"} successfully!`
+          : "Agent has been unassigned successfully."
+      );
+      setIsReassignOpen(false);
+      qc.invalidateQueries({ queryKey: ["allAgentProfiles"] });
+      if (selectedAgent?.id === reassignAgent.id) {
+        setSelectedAgent((prev: any) => ({ ...prev, sub_admin_id: newSubAdminId }));
+      }
+    } catch (err: any) {
+      toast.error("Failed to reassign agent: " + (err?.message || "Unknown error"));
+    } finally {
+      setReassignBusy(false);
     }
   };
 
@@ -270,17 +420,37 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
 
   return (
     <div className="space-y-6">
-      {/* Search and Refresh Bar */}
+      {/* Search, Sub-Admin Filter, and Refresh Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative flex-1 min-w-[260px] max-w-md">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search agents by name, email, agency, district..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex flex-1 flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[240px] max-w-md">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search agents by name, email, agency, district..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+
+          <div className="w-56">
+            <Select value={subAdminFilter} onValueChange={setSubAdminFilter}>
+              <SelectTrigger className="text-xs">
+                <SelectValue placeholder="Filter by Sub-Admin" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sub-Admins / Orgs</SelectItem>
+                <SelectItem value="unassigned">Unassigned Agents</SelectItem>
+                {subAdmins.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.organization_name} ({s.full_name})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
+
         <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
           <RotateCw className="h-3.5 w-3.5" />
           Refresh Agents
@@ -321,6 +491,8 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
             onView={openViewModal}
             onApprove={openApproveDialog}
             onReject={openRejectDialog}
+            onReassign={openReassignDialog}
+            subAdminMap={subAdminMap}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
           />
@@ -334,6 +506,8 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
             isLoading={isLoading}
             onView={openViewModal}
             onSuspend={openSuspendDialog}
+            onReassign={openReassignDialog}
+            subAdminMap={subAdminMap}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
           />
@@ -347,6 +521,8 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
             isLoading={isLoading}
             onView={openViewModal}
             onApprove={openApproveDialog}
+            onReassign={openReassignDialog}
+            subAdminMap={subAdminMap}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
           />
@@ -360,6 +536,8 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
             isLoading={isLoading}
             onView={openViewModal}
             onReactivate={openReactivateDialog}
+            onReassign={openReassignDialog}
+            subAdminMap={subAdminMap}
             busyId={busyId}
             getStatusBadge={getStatusBadge}
           />
@@ -656,6 +834,61 @@ export function AdminAgentManagement({ defaultTab = "pending" }: { defaultTab?: 
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reassign Agent to Sub-Admin Modal */}
+      <Dialog open={isReassignOpen} onOpenChange={setIsReassignOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="h-5 w-5 text-primary" />
+              Reassign Agent to Sub-Admin
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg border bg-muted/40 p-3 text-xs space-y-1">
+              <p><span className="text-muted-foreground">Agent:</span> <b>{reassignAgent?.full_name}</b></p>
+              <p><span className="text-muted-foreground">Agency:</span> <b>{reassignAgent?.agency_name}</b></p>
+              <p>
+                <span className="text-muted-foreground">Current Organization:</span>{" "}
+                <b>
+                  {reassignAgent?.sub_admin_id
+                    ? subAdminMap.get(reassignAgent.sub_admin_id)?.organization_name || "Assigned"
+                    : "Unassigned"}
+                </b>
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor="target-sub-admin">Assign to Partner Organization / Sub-Admin</Label>
+              <Select value={reassignTargetSubAdminId} onValueChange={setReassignTargetSubAdminId}>
+                <SelectTrigger id="target-sub-admin" className="mt-1.5">
+                  <SelectValue placeholder="Select Sub-Admin" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">-- Unassign (No Sub-Admin) --</SelectItem>
+                  {activeSubAdmins.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.organization_name} — {s.full_name} ({s.designation || "Sub-Admin"})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Reassigning an agent will move their approval request and beneficiary statistics to the chosen organization.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsReassignOpen(false)} disabled={reassignBusy}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmReassign} disabled={reassignBusy} className="gap-2">
+              {reassignBusy && <RotateCw className="h-4 w-4 animate-spin" />}
+              Confirm Reassignment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -669,6 +902,8 @@ function AgentTable({
   onReject,
   onSuspend,
   onReactivate,
+  onReassign,
+  subAdminMap,
   busyId,
   getStatusBadge,
 }: {
@@ -680,6 +915,8 @@ function AgentTable({
   onReject?: (id: string) => void;
   onSuspend?: (id: string) => void;
   onReactivate?: (id: string) => void;
+  onReassign?: (agent: any) => void;
+  subAdminMap?: Map<string, any>;
   busyId: string | null;
   getStatusBadge: (status: string) => React.ReactNode;
 }) {
@@ -713,6 +950,7 @@ function AgentTable({
           <thead className="bg-muted/50 text-xs font-semibold uppercase tracking-wider text-muted-foreground border-b">
             <tr>
               <th className="px-4 py-3">Agent & Agency</th>
+              <th className="px-4 py-3">Assigned Sub-Admin</th>
               <th className="px-4 py-3">Contact</th>
               <th className="px-4 py-3">Location</th>
               <th className="px-4 py-3">Date Applied</th>
@@ -721,108 +959,139 @@ function AgentTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {agents.map((agent) => (
-              <tr key={agent.id} className="hover:bg-muted/30 transition-colors">
-                <td className="px-4 py-3">
-                  <div className="font-semibold text-foreground">{agent.full_name}</div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Building2 className="h-3 w-3" />
-                    {agent.agency_name}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  <div className="text-foreground">{agent.email}</div>
-                  <div className="text-muted-foreground">{agent.mobile}</div>
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  <div className="text-foreground">{agent.district}</div>
-                  <div className="text-muted-foreground">{agent.state}</div>
-                </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">
-                  {new Date(agent.created_at).toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </td>
-                <td className="px-4 py-3">{getStatusBadge(agent.status)}</td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-1.5">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 gap-1"
-                      onClick={() => onView(agent)}
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                      View
-                    </Button>
+            {agents.map((agent) => {
+              const assignedSubAdmin = agent.sub_admin_id && subAdminMap ? subAdminMap.get(agent.sub_admin_id) : null;
+              return (
+                <tr key={agent.id} className="hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-foreground">{agent.full_name}</div>
+                    <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Building2 className="h-3 w-3" />
+                      {agent.agency_name}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {assignedSubAdmin ? (
+                      <div>
+                        <div className="font-medium text-primary flex items-center gap-1">
+                          <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                          <span>{assignedSubAdmin.organization_name}</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">{assignedSubAdmin.full_name}</div>
+                      </div>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+                        Unassigned
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    <div className="text-foreground">{agent.email}</div>
+                    <div className="text-muted-foreground">{agent.mobile}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    <div className="text-foreground">{agent.district}</div>
+                    <div className="text-muted-foreground">{agent.state}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {new Date(agent.created_at).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </td>
+                  <td className="px-4 py-3">{getStatusBadge(agent.status)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 gap-1"
+                        onClick={() => onView(agent)}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View
+                      </Button>
 
-                    {status === "pending" && (
-                      <>
+                      {onReassign && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-primary hover:bg-primary/10 gap-1"
+                          onClick={() => onReassign(agent)}
+                          title="Reassign to another Sub-Admin"
+                        >
+                          <ArrowRightLeft className="h-3.5 w-3.5" />
+                          Reassign
+                        </Button>
+                      )}
+
+                      {status === "pending" && (
+                        <>
+                          <Button
+                            size="sm"
+                            className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                            disabled={busyId === agent.id}
+                            onClick={() => onApprove?.(agent.id)}
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            Approve
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2 text-destructive hover:bg-destructive/10"
+                            disabled={busyId === agent.id}
+                            onClick={() => onReject?.(agent.id)}
+                          >
+                            <XCircle className="h-3.5 w-3.5" />
+                            Reject
+                          </Button>
+                        </>
+                      )}
+
+                      {status === "approved" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-2.5 text-amber-700 hover:bg-amber-50 border-amber-300 gap-1"
+                          disabled={busyId === agent.id}
+                          onClick={() => onSuspend?.(agent.id)}
+                        >
+                          <PauseCircle className="h-3.5 w-3.5" />
+                          Suspend
+                        </Button>
+                      )}
+
+                      {status === "suspended" && (
                         <Button
                           size="sm"
                           className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                          disabled={busyId === agent.id}
+                          onClick={() => onReactivate?.(agent.id)}
+                        >
+                          <PlayCircle className="h-3.5 w-3.5" />
+                          Reactivate
+                        </Button>
+                      )}
+
+                      {status === "rejected" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-emerald-700 hover:bg-emerald-50 border-emerald-300 gap-1"
                           disabled={busyId === agent.id}
                           onClick={() => onApprove?.(agent.id)}
                         >
                           <CheckCircle className="h-3.5 w-3.5" />
                           Approve
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 px-2 text-destructive hover:bg-destructive/10"
-                          disabled={busyId === agent.id}
-                          onClick={() => onReject?.(agent.id)}
-                        >
-                          <XCircle className="h-3.5 w-3.5" />
-                          Reject
-                        </Button>
-                      </>
-                    )}
-
-                    {status === "approved" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 px-2.5 text-amber-700 hover:bg-amber-50 border-amber-300 gap-1"
-                        disabled={busyId === agent.id}
-                        onClick={() => onSuspend?.(agent.id)}
-                      >
-                        <PauseCircle className="h-3.5 w-3.5" />
-                        Suspend
-                      </Button>
-                    )}
-
-                    {status === "suspended" && (
-                      <Button
-                        size="sm"
-                        className="h-8 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                        disabled={busyId === agent.id}
-                        onClick={() => onReactivate?.(agent.id)}
-                      >
-                        <PlayCircle className="h-3.5 w-3.5" />
-                        Reactivate
-                      </Button>
-                    )}
-
-                    {status === "rejected" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 px-2 text-emerald-700 hover:bg-emerald-50 border-emerald-300 gap-1"
-                        disabled={busyId === agent.id}
-                        onClick={() => onApprove?.(agent.id)}
-                      >
-                        <CheckCircle className="h-3.5 w-3.5" />
-                        Approve
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

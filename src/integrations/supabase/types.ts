@@ -32,6 +32,7 @@ export type Database = {
           reviewed_by: string | null
           state: string
           status: "unverified" | "pending" | "approved" | "rejected" | "suspended"
+          sub_admin_id?: string | null
           suspension_reason: string | null
           updated_at: string | null
         }
@@ -52,6 +53,7 @@ export type Database = {
           reviewed_by?: string | null
           state: string
           status?: "unverified" | "pending" | "approved" | "rejected" | "suspended"
+          sub_admin_id?: string | null
           suspension_reason?: string | null
           updated_at?: string | null
         }
@@ -72,7 +74,119 @@ export type Database = {
           reviewed_by?: string | null
           state?: string
           status?: "unverified" | "pending" | "approved" | "rejected" | "suspended"
+          sub_admin_id?: string | null
           suspension_reason?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      agent_approval_history: {
+        Row: {
+          action: "approved" | "rejected" | "suspended" | "reactivated" | "reassigned"
+          actioned_by: string
+          agent_id: string
+          created_at: string | null
+          id: string
+          new_status: string | null
+          previous_status: string | null
+          reason: string | null
+          sub_admin_id: string | null
+        }
+        Insert: {
+          action: "approved" | "rejected" | "suspended" | "reactivated" | "reassigned"
+          actioned_by: string
+          agent_id: string
+          created_at?: string | null
+          id?: string
+          new_status?: string | null
+          previous_status?: string | null
+          reason?: string | null
+          sub_admin_id?: string | null
+        }
+        Update: {
+          action?: "approved" | "rejected" | "suspended" | "reactivated" | "reassigned"
+          actioned_by?: string
+          agent_id?: string
+          created_at?: string | null
+          id?: string
+          new_status?: string | null
+          previous_status?: string | null
+          reason?: string | null
+          sub_admin_id?: string | null
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          created_at: string | null
+          data: Json | null
+          id: string
+          is_read: boolean
+          message: string
+          title: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          data?: Json | null
+          id?: string
+          is_read?: boolean
+          message: string
+          title: string
+          type?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          data?: Json | null
+          id?: string
+          is_read?: boolean
+          message?: string
+          title?: string
+          type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      sub_admin_profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          created_by: string | null
+          designation: string
+          email: string
+          full_name: string
+          id: string
+          is_active: boolean
+          mobile: string
+          organization_name: string
+          updated_at: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          designation: string
+          email: string
+          full_name: string
+          id: string
+          is_active?: boolean
+          mobile: string
+          organization_name: string
+          updated_at?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          designation?: string
+          email?: string
+          full_name?: string
+          id?: string
+          is_active?: boolean
+          mobile?: string
+          organization_name?: string
           updated_at?: string | null
         }
         Relationships: []
@@ -477,7 +591,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: "admin" | "user" | "agent"
+      app_role: "admin" | "user" | "agent" | "sub_admin"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -605,7 +719,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "user"],
+      app_role: ["admin", "user", "agent", "sub_admin"],
     },
   },
 } as const
